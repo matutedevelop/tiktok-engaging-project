@@ -10,6 +10,7 @@ __pycache__/
 .Python
 build/
 develop-eggs/
+.devenv/
 dist/
 downloads/
 eggs/
@@ -216,3 +217,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# sht
+
+*.py[cod]
+.DS_Store
+artifacts/
+data/raw/
+data/interim/
+data/processed/
