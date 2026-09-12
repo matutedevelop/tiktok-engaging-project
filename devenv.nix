@@ -7,6 +7,7 @@
   # https://devenv.sh/packages/
   packages = [
     pkgs.git
+    pkgs.zlib
   ];
 
   # https://devenv.sh/languages/
@@ -22,6 +23,19 @@
       sync.enable = true;
     };
   };
+
+
+
+
+# === === === === === === ===
+
+  env.LD_LIBRARY_PATH = lib.makeLibraryPath [
+    pkgs.zlib
+  ];
+
+# === === === === === === ===
+
+
 
   # https://devenv.sh/scripts/
   scripts.hello.exec = ''
