@@ -769,6 +769,12 @@ def _():
     3. imputacion de datos numericos segun la estrategia recomendada por la literatura
 
     4. dropear la cantidad marginal de nulos restantes
+
+
+    Riesgos eticos y sesgos
+
+
+    Hemos optado en principio en no usar ni variables temporales por cuestiones de un posible leakeage ni variables relacionadas con la informacion del usuario
     """)
     return
 
