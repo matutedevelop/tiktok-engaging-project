@@ -10,3 +10,15 @@ dependencies = [
     "pandas>=3.0.5",
     "pyarrow>=25.0.1",
 ]
+
+[dependency-groups]
+dev = [
+    "altair>=6.2.2",
+    "nbformat>=5.11.1",
+    "python-lsp-ruff>=2.3.4",
+    "python-lsp-server>=1.15.0",
+    "ruff>=0.16.7",
+    "vegafusion>=2.0.3",
+    "vl-convert-python>=1.9.0.post1",
+    "websockets>=17.1",
+]
