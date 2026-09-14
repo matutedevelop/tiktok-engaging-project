@@ -150,38 +150,53 @@ Para este conjunto de datos, la variable objetivo (target) principal a predecir 
 ## Obtención de los datos
 
 
-los datos son obtenibles atraves de HugginFace, para descargarlos y generar la muestra utilizada para el EDA de forma reproducible, Utilizamos el siguiente codigo dentro de /data/raw/get_data.py y ejecutando `uv run python data/raw/get_data.py ` desde la raiz del proyecto
+Los datos son obtenibles atraves de HugginFace, para descargarlos y generar la muestra utilizada para el EDA de forma reproducible, Utilizamos el siguiente codigo 
 
+ 
+**Paso 1 — Instalar dependencias con `uv`:**
+ 
+```bash
+uv sync --lock
+```
+ 
+**Paso 2 — Crear el script de descarga**
+ 
+Dentro de `data/raw/`, crear el archivo `get_data.py` con el siguiente contenido:
+ 
 ```python
-# get_data.py
-
 import gc
-
+ 
 import pandas as pd
 from datasets import load_dataset
-
-
+ 
+ 
 ds = load_dataset("The-data-company/TikTok-10M")
-
+ 
 ds["train"].to_parquet("data/raw/data.parquet")
-
+ 
 del ds
 gc.collect()
-
+ 
 df = pd.read_parquet("data/raw/data.parquet")
 sample_df = df.sample(frac=0.2, random_state=69)
 sample_df.to_parquet("data/raw/sample_data.parquet")
-
 ```
-
-
-
-
-
-
-
-
-
+ 
+**Paso 3 — Ejecutar el script con `uv`, desde la raíz del repo:**
+ 
+```bash
+uv run python data/raw/get_data.py
+```
+ 
+**Paso 4 — Verificar los archivos generados**
+ 
+Al terminar, en `data/raw/` quedarán dos archivos:
+ 
+| Archivo | Contenido | Peso aproximado |
+|---|---|---|
+| `data/raw/data.parquet` | Dataset completo | ~9 GB |
+| `data/raw/sample_data.parquet` | Muestra aleatoria al 20% | ~1.80 GB |
+ 
 
 ## Archivos locales
 
