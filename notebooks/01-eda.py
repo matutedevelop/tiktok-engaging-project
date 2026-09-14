@@ -1,6 +1,13 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "marimo>=0.24.2",
+# ]
+# ///
+
 import marimo
 
-__generated_with = "0.23.6"
+__generated_with = "0.24.2"
 app = marimo.App(width="medium", css_file="custom.css")
 
 with app.setup:
@@ -19,16 +26,18 @@ with app.setup:
 
 @app.cell
 def _():
-    sns.set_theme(style="white", palette="RdYlGn", font="BlexMono Nerd Font Mono")
+    sns.set_theme(
+        style="white", palette="RdYlGn", font="BlexMono Nerd Font Mono"
+    )
     SEED = 171205
-
 
     def ctheme():
         return {
             "config": {
                 "theme": "powerbi",
                 "background": "#ffffff",
-                "font": "Inter, system-ui, sans-serif",
+                # "font": "Inter, system-ui, sans-serif",
+                "font": " BlexMono Nerd Font Mono",
                 "autosize": {"type": "fit", "contains": "padding"},
                 "title": {
                     "color": "#111111",
@@ -54,10 +63,10 @@ def _():
             }
         }
 
-
+    # alt.data_transformers.enable("vegafusion")
     alt.themes.register("ctheme", ctheme)
-    alt.themes.enable("ctheme")
-    return
+    alt.theme.enable("ctheme")
+    return (SEED,)
 
 
 @app.cell
@@ -106,7 +115,21 @@ def _(df):
 
 @app.cell
 def _(df):
-    df.isna().mean()
+    _df = (
+        df.isna()
+        .mean()
+        .rename_axis("column")
+        .reset_index(name="null_proportion")
+    )
+    alt.Chart(_df).mark_bar().encode(
+        x=alt.X(
+            "column:N",
+            sort=None,
+            title="column",
+            axis=alt.Axis(labelAngle=-90),
+        ),
+        y="null_proportion",
+    ).properties(title="proporcion de nulos por variable")
     return
 
 
@@ -189,22 +212,18 @@ def _():
         "music_id",
         "music_title",
         "music_album",
+        "duet_info_duet_from_id",
         "music_author_name",
-        "music_duration",
+        "poi_id",
+        "diversification_id",
+        "item_comment_status",
     ]
     NUMERICAL_FEATURES = [
         "music_duration",
-        "music_id",
-        "duet_info_duet_from_id",
         "vq_score",
-        "playlist_id",
-        "diversification_id",
-        "country_code",
         "duration",
-        "poi_id",
         "stitch_display",
         "duet_display",
-        "item_comment_status",
     ]
 
     POST_STATISTICS_FEATURES = [
@@ -215,7 +234,7 @@ def _():
         "collect_count",
     ]
     TARGET = "play_count"
-    return BOOLEAN_FEATURES, NOMINAL_FEATURES, TARGET
+    return BOOLEAN_FEATURES, NOMINAL_FEATURES, NUMERICAL_FEATURES, TARGET
 
 
 @app.cell(hide_code=True)
@@ -255,7 +274,6 @@ def _(boolean_features_df):
         .reset_index()
         .rename(columns={"index": "column", 0: "proportion_1s"})
     )
-
 
     _c1 = (
         alt.Chart(_df)
@@ -306,11 +324,11 @@ def _(BOOLEAN_FEATURES, TARGET, boolean_df):
         figsize=(15, 10 * len(BOOLEAN_FEATURES)),
     )
     ax = ax.flatten()
-    for i, dummie_col in enumerate(BOOLEAN_FEATURES):
+    for i1, dummie_col in enumerate(BOOLEAN_FEATURES):
         sns.violinplot(
-            boolean_df, x=TARGET, hue=dummie_col, ax=ax[i], log_scale=True
+            boolean_df, x=TARGET, hue=dummie_col, ax=ax[i1], log_scale=True
         )
-        ax[i].set_title(
+        ax[i1].set_title(
             f"{dummie_col}\n false/true ratio: {boolean_df[dummie_col].mean()}"
         )
     plt.show()
@@ -370,7 +388,7 @@ def _(city_crosstab):
     # city_crosstab.sum()
 
     sns.histplot(city_crosstab.sum())
-    plt.title("suma de las columnad de crosstab \ncity vs city_code")
+    plt.title("suma de las columnas de crosstab \ncity vs city_code")
     return
 
 
@@ -396,22 +414,20 @@ def _():
 
 
 @app.cell
-def _(nom_df_):
-    nom_df = nom_df_.drop(columns=["city"])
-    nom_df
-    return (nom_df,)
+def _():
+    return
 
 
 @app.cell
-def _(nom_df):
+def _(nom_df_):
     _df = (
-        nom_df.nunique()
+        nom_df_.nunique()
         .reset_index()
         .rename(columns={"index": "column", 0: "Distinct_count"})
     )
-    alt.Chart(_df).mark_bar().encode(x="column", y="Distinct_count").properties(
-        title="cadenas diferentes por columna"
-    )
+    alt.Chart(_df).mark_bar().encode(
+        x="column", y="Distinct_count"
+    ).properties(title="cadenas diferentes por columna")
     return
 
 
@@ -419,12 +435,341 @@ def _(nom_df):
 def _():
     mo.md(r"""
     una de las cosas que salta mucho a la vista es la gran diferencia entre `music_title` y `music_id` uno podria llegar a pensar que deberian de ser similares, la hipotesis es que puede haber una buena cantidad de canciones diferentes con el mismo titulo, aun asi vale la pena investigar
+
+    veamos cuales son aquellas columnas que tienen menos granularidad en sus filas
     """)
     return
 
 
 @app.cell
+def _(nom_df_):
+    nom_df_.nunique().sort_values(ascending=True)
+    return
+
+
+@app.cell(hide_code=True)
 def _():
+    mo.md(r"""
+    A primera instancia si queremos analizar algo como la media condicional vemos que a lo sumo hay 5 variables utiles, desde `poi_category` hasta `poi_tt_type_code`. es decir 364 clases para 2,000,000 de datos  o 10,000,000 en el dataset completo, todavia puede contarnos algo. Mas de 1,000 entradas diferentes necesitan algun otro tipo de feature engineering par que nos sean de utilidad, y en su defeto `country_code es inutil`.
+
+    Otra cosa que vale la pena mirar, es analizar la colinearidad entre `poi_category, poi_tt_type_name_super` y `poi_tt_type_name_tiny, poi_tt_type_code` debido a que tienen granularidades muy similares
+    """)
+    return
+
+
+@app.cell
+def _(nom_df_):
+    _df = (
+        nom_df_.groupby("poi_category")["poi_tt_type_name_super"]
+        .nunique()
+        .reset_index()
+        .rename(
+            columns={
+                "poi_tt_type_name_super": "distinct_poi_tt_type_name_super_count"
+            }
+        )
+    )
+    alt.Chart(_df).mark_bar().encode(
+        y="distinct_poi_tt_type_name_super_count", x="poi_category"
+    ).properties(title="colinearidad  poi_category vs poi_tt_type_name_super ")
+    return
+
+
+@app.cell
+def _(nom_df_):
+    _table = pd.crosstab(
+        nom_df_["poi_category"],
+        nom_df_["poi_tt_type_name_super"],
+        normalize=True,
+    )
+
+    (_table * -1).transform(np.sort).abs()
+    return
+
+
+@app.cell
+def _(nom_df_):
+    # poi_tt_type_name_tiny, poi_tt_type_code
+    _df = (
+        nom_df_.groupby("poi_tt_type_name_tiny")["poi_tt_type_code"]
+        .nunique()
+        .reset_index()
+        .rename(columns={"poi_tt_type_code": "distinct_poi_tt_type_code"})
+    )
+    alt.Chart(_df).mark_bar().encode(
+        y="distinct_poi_tt_type_code", x="poi_tt_type_name_tiny"
+    ).properties(title="colinearidad  poi_category vs poi_tt_type_name_super ")
+    return
+
+
+@app.cell
+def _(nom_df_):
+    _table = pd.crosstab(
+        nom_df_["poi_tt_type_name_tiny"],
+        nom_df_["poi_tt_type_code"],
+        normalize=True,
+    )
+
+    (_table * -1).transform(np.sort).abs()
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    `poi_category, poi_tt_type_name_super` y `poi_tt_type_name_tiny, poi_tt_type_code` son colineares por los que deberiamos de quedarnos solamente con una por cada par
+    """)
+    return
+
+
+@app.cell
+def _(nom_df_):
+    nom_cols_to_drop = [
+        "city",
+        "poi_tt_type_name_super",
+        "poi_tt_type_code",
+        "country_code",
+    ]
+    nom_df = nom_df_.drop(columns=nom_cols_to_drop)
+    nom_df
+    return (nom_df,)
+
+
+@app.cell
+def _(nom_df):
+    nominal_barcount_charts = []
+
+    for nom_col in nom_df:
+        # 1. Preparar el DataFrame con orden descendente y calcular la proporción acumulada
+        hist_df_ = (
+            nom_df[nom_col]
+            .value_counts()
+            .sort_values(ascending=False)
+            .rename_axis("string")
+            .reset_index(name="count")
+        )
+
+        # Ojiva acumulada (0 a 1)
+        hist_df_["cum_prop"] = (
+            hist_df_["count"].cumsum() / hist_df_["count"].sum()
+        )
+
+        hist_df = hist_df_.head(40)  # Top 40 categorías
+
+        bars = (
+            alt.Chart(hist_df)
+            .mark_bar(color="#4c78a8")
+            .encode(
+                x=alt.X(
+                    "string:N",
+                    sort=None,
+                    title=nom_col,
+                    axis=alt.Axis(labelAngle=-45),
+                ),
+                y=alt.Y("count:Q", title="Conteo"),
+            )
+        )
+
+        line = (
+            alt.Chart(hist_df)
+            .mark_line(color="salmon", point=False)
+            .encode(
+                x=alt.X("string:N", sort=None),
+                y=alt.Y(
+                    "cum_prop:Q",
+                    title="Proporción Acumulada",
+                    scale=alt.Scale(domain=[0, 1]),
+                    axis=alt.Axis(format="%"),
+                ),
+            )
+        )
+
+        chart = (
+            alt.layer(bars, line)
+            .resolve_scale(y="independent")
+            .properties(title=f"Conteo y Ojiva de {nom_col}")
+        )
+
+        nominal_barcount_charts.append(chart)
+
+    alt.vconcat(*nominal_barcount_charts)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Las interpretaciones de los graficos arrojan los diferentes resultados, aunque `desc` tenga un histograma con una clase dominante, hay demasiada variedad, cosa que ya veiamos desde el grafico anterior `address` es una variable mas manejable, con un codo de pareto mas definido, esto entre otras cosas nos sirve para establecer un threshold y definir una label `other` para los demas valores, otras variables con las que masomenos podriamos hacer algo similar son `city_code` `poi_tt_type_name_medium`, `poi_tt_type_name_tiny` y `diversification_id`
+
+
+
+    ### Analisis de variables numericas
+    """)
+    return
+
+
+@app.cell
+def _(NUMERICAL_FEATURES, SEED, TARGET, df):
+    num_df = df[NUMERICAL_FEATURES + [TARGET]]
+    num_sample = num_df.sample(10_000, random_state=SEED)
+
+    c = sns.pairplot(num_sample, hue=TARGET, palette="RdYlGn")
+
+    c._legend.remove()
+
+    _norm = plt.Normalize(num_sample[TARGET].min(), num_sample[TARGET].max())
+    _sm = plt.cm.ScalarMappable(cmap="RdYlGn", norm=_norm)
+
+    c.fig.colorbar(_sm, ax=c.axes, orientation="vertical", label=TARGET)
+    c
+    return num_df, num_sample
+
+
+@app.cell
+def _(num_df):
+    num_df.describe()
+    return
+
+
+@app.cell
+def _(NUMERICAL_FEATURES, TARGET, num_df):
+    _, ax1 = plt.subplots(
+        nrows=len(NUMERICAL_FEATURES),
+        ncols=2,
+        figsize=(15, 10 * len(NUMERICAL_FEATURES)),
+    )
+
+    ax1 = ax1.flatten()
+
+    for i2, num_col in enumerate(NUMERICAL_FEATURES):
+        sns.scatterplot(num_df, x=num_col, y=TARGET, ax=ax1[i2 * 2])
+        sns.boxplot(num_df, x=num_col, ax=ax1[i2 * 2 + 1], log_scale=True)
+        ax1[i2 * 2].set_yscale("log")
+    plt.show()
+    return
+
+
+@app.cell
+def _(num_df):
+    # para chequear que duet y stitch display tienen un solo valor
+
+    alt.data_transformers.enable("vegafusion")
+
+    _cols = ["duet_display", "stitch_display"]
+
+    alt.hconcat(
+        *[
+            alt.Chart(num_df[[c]])
+            .mark_bar()
+            .encode(x=alt.X(c, bin=True), y="count()")
+            .properties(title=f"histograma de {c}")
+            for c in _cols
+        ]
+    )
+    return
+
+
+@app.cell
+def _(num_df):
+    num_cols_to_drop = ["stitch_display", "duet_display"]
+    num_df_ = num_df.drop(columns=num_cols_to_drop)
+    return (num_df_,)
+
+
+@app.cell
+def _(TARGET, num_df, num_sample):
+    alt.data_transformers.enable("default")
+
+    _, ax2 = plt.subplots(nrows=1, ncols=2, figsize=(20, 10))
+
+    sns.boxplot(num_sample[TARGET], log_scale=True, ax=ax2[0])
+    sns.histplot(num_sample[TARGET], log_scale=True, ax=ax2[1])
+    ax2[0].set_title("boxplot de play_count")
+    ax2[1].set_title(f"histplot de play_count\nskew:{num_df[TARGET].skew()}")
+    return
+
+
+@app.cell
+def _(num_df_):
+    sns.heatmap(num_df_.corr(), cmap="RdYlGn")
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    Este pequeño analisis nos indica tambien que otras variables podemos tratar o debemos dropear. Lo Primero y mas evidente es que probablemente busquemos modelar al final $\ln(y)$ o $y^\lambda$ debido a que sino nos quedamos con un target con demasiados outliers. Por otro lado tambien revela que debemos de dropear `duet_display, stitch_display` y que hay oportunidad para discretizar o crear una nueva variable `no_vq` para intentar tratar aquellos donde `vq_score` es 0, por otro lado tenemos una correlacion alta entre `duration` y `music_duration` un tema que hay que cuidar si de casualidad se usa modelos lineales con interpretacion sobre los $w$ de las features, aunque de primeras luce complicado que un modelo lineal ajuste bien
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    # Conclusion
+
+    Siendo concisos nos encontramos con un dataset relativamente limpio con muchos metadatos y datos de caracter nominal o variables de texto con mucha granularidad. Pocas Features numericas y sin relacion aparente con el target, el target es una variable con alta varianza y desviacion estandar alta y bastante sesgada.
+
+
+    Lo que sigue a continuacion es  una preparacion de los datos sumamente conservadora, tales como imputacion de nulos dropear variables
+
+    si quisieramos ser mas especificos los pasos a seguir serian los siguientes
+
+    1. Dropear las variables
+
+    ["stitch_display", "duet_display","city","poi_tt_type_name_super","poi_tt_type_code","country_code"]
+
+
+    y quedarnos solamente con
+    ```
+    BOOLEAN_FEATURES = [
+        "duet_enabled",
+        "is_ad",
+        "item_mute",
+        "item_control_can_repost",
+        "official_item",
+        "original_item",
+        "share_enabled",
+        "stitch_enabled",
+        "music_original",
+    ]
+    NOMINAL_FEATURES = [
+        "desc",
+        "address",
+        "poi_name",
+        "city_code",
+        "poi_category",
+        "poi_tt_type_name_medium",
+        "poi_tt_type_name_tiny",
+        "challenges",
+        "music_id",
+        "music_title",
+        "music_album",
+        "duet_info_duet_from_id",
+        "music_author_name",
+        "poi_id",
+        "diversification_id",
+        "item_comment_status",
+    ]
+    NUMERICAL_FEATURES = [
+        "music_duration",
+        "vq_score",
+        "duration",
+    ]
+
+    TARGET = "play_count"
+    ```
+
+
+    2. cambiar a los tipos de dato correctos
+
+    boolean_features -> astype(bool)
+    *id -> object / category
+
+    3. imputacion de datos numericos segun la estrategia recomendada por la literatura
+
+    4. dropear la cantidad marginal de nulos restantes
+    """)
     return
 
 
