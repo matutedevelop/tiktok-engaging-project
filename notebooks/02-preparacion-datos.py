@@ -80,7 +80,7 @@ def _():
 
 @app.cell
 def _():
-    df_raw = pd.read_parquet("data/raw/sample_data.parquet")
+    df_raw = pd.read_parquet("../data/raw/sample_data.parquet")
     return (df_raw,)
 
 

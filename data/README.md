@@ -156,7 +156,7 @@ Los datos son obtenibles atraves de HugginFace, para descargarlos y generar la m
 **Paso 1 — Instalar dependencias con `uv`:**
  
 ```bash
-uv sync --lock
+uv sync --locked
 ```
  
 **Paso 2 — Crear el script de descarga**

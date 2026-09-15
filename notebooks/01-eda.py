@@ -71,7 +71,7 @@ def _():
 
 @app.cell
 def _():
-    df = pd.read_parquet("data/raw/sample_data.parquet")
+    df = pd.read_parquet("../data/raw/sample_data.parquet")
     df
     return (df,)
 
