@@ -21,6 +21,7 @@
     uv = {
       enable = true;
       sync.enable = true;
+      sync.allGroups = true;
     };
   };
 
