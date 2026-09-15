@@ -3,5 +3,29 @@ name = "tiktok-engaging-project"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "datasets>=5.0.1",
+    "huggingface-hub>=1.31.0",
     "ipykernel>=7.3.0",
+    "marimo>=0.24.2",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.3",
+    "pandas>=3.0.5",
+    "polars>=1.44.2",
+    "pyarrow>=25.0.1",
+    "seaborn>=0.13.2",
+    "vegafusion>=2.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "altair>=6.2.2",
+    "mcp>=1",
+    "nbformat>=5.11.1",
+    "pydantic>=2",
+    "python-lsp-ruff>=2.3.4",
+    "python-lsp-server>=1.15.0",
+    "ruff>=0.16.7",
+    "vegafusion>=2.0.3",
+    "vl-convert-python>=1.9.0.post1",
+    "websockets>=17.1",
 ]
