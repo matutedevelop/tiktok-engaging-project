@@ -52,8 +52,8 @@ Los datos no se versionan en el repositorio; ver instrucciones de descarga más 
 - [x] Análisis exploratorio (`01-eda.py`): calidad de datos, nulos, duplicados, tipos, distribuciones del target y de las features booleanas, nominales y numéricas, colinealidades.
 - [x] Definición del conjunto de features a priori: 9 booleanas, 16 nominales, 3 numéricas y target `play_count`.
 - [x] Pipeline de preparación (`02-preparacion.py`): selección de columnas, tipificación, imputación de numéricas por media/mediana según asimetría, eliminación de nulos residuales. Factorizado en funciones encadenables con `.pipe()`.
-- [ ] Ingeniería de features para variables de alta cardinalidad y texto (`desc`, `challenges`, `music_id`, `poi_id`).
-- [ ] Protocolo de evaluación, baselines y modelado.
+- [x] Ingeniería de features para variables de alta cardinalidad y texto (`desc`, `challenges`, `music_id`, `poi_id`).
+- [x] Protocolo de evaluación, baselines y modelado.
 
 ### Hallazgos principales del EDA
 
