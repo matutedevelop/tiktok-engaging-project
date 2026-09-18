@@ -32,10 +32,10 @@ Las variables a priori explican una fracción modesta pero estadísticamente sig
 [The-data-company/TikTok-10M](https://huggingface.co/datasets/The-data-company/TikTok-10M)
   (Hugging Face), ≈ 10 M publicaciones en Parquet (~9 GB). Licencia reportada como "other"; declarado construido con datos públicos para investigación. Contenido *trending* con POI en Estados Unidos, primavera 2025. Diccionario completo en [`data/README.md`](../data/README.md).
 - **Unidad de observación:** 
-una fila = una publicación (video) con sus métricas de interacción en un momento dado, metadatos de creador, audio, POI y configuración.
+Una fila = una publicación (video) con sus métricas de interacción en un momento dado, metadatos de creador, audio, POI y configuración.
 - **Target:** 
 `play_count`, con varianza y sesgo altos (cola pesada), visible en boxplot e histograma en escala log.
-- **Tipos incorrectos en la fuente:** banderas como `is_ad` vienen como cadenas `'t'`/`'f'`; campos temporales como cadena; `music_id`, `city_code` y `diversification_id` como `float64`.
+- **Tipos inapropiados en la fuente:** banderas como `is_ad` vienen como cadenas `'t'`/`'f'`; campos temporales como cadena; `music_id`, `city_code` y `diversification_id` como `float64`.
 - **Nulos:** individualmente marginales por columna, pero exigir registros completos deja <1 % de los datos. Imputando solo numéricas y eliminando residuales se descarta ≈15 % de la muestra.
 - **Duplicados de `id`:** 
 proporción muy pequeña.
@@ -48,7 +48,7 @@ las nueve están muy desbalanceadas (ninguna cerca del 50 %) y sus distribucione
 - **Numéricas vs. target:** 
 sin relación aparente en scatter/pairplot.
 - **vq_score:** 
-masa de valores en 0.
+muchos valores en 0.
 - **Cardinalidad:** 
 solo ~5 nominales tienen ≤364 clases (estimables con medias condicionales); el resto supera 1 000 valores distintos. `desc` tiene una clase dominante pero demasiada variedad; `address` muestra un codo de Pareto claro que permite agrupar la cola en `other`.
 - **`music_title` vs. `music_id`:** 
@@ -56,11 +56,9 @@ cardinalidades muy distintas; hipótesis: muchas canciones comparten título.
 
 ### Decisión inicial
 
-- **Volumen de trabajo:** 
-todo el pipeline opera sobre `data/raw/sample_data.parquet` (20 % del dataset, `random_state=69`, ~1.8 GB, ~2 M filas antes de limpiar, ~1.7 M después), generado por `data/raw/get_data.py`. Escalar al dataset completo queda condicionado a memoria disponible y a que el modelo demuestre señal sobre la muestra.
 - **Features a priori (28):**
   - Booleanas (9): `duet_enabled`, `is_ad`, `item_mute`, `item_control_can_repost`, `official_item`, `original_item`, `share_enabled`, `stitch_enabled`, `music_original`.
-    Justificación: configuración explícita del creador que afecta la propagación.
+Justificación: configuración explícita del creador que afecta la propagación.
   - Nominales (16): `desc`, `address`, `poi_name`, `city_code`, `poi_category`, `poi_tt_type_name_medium`, `poi_tt_type_name_tiny`, `challenges`, `music_id`, `music_title`, `music_album`, `duet_info_duet_from_id`, `music_author_name`, `poi_id`, `diversification_id`, `item_comment_status`.
     Justificación: texto, hashtags, música y ubicación son las modalidades que
     la literatura identifica como informativas y que se fijan antes de publicar.
@@ -73,6 +71,9 @@ todo el pipeline opera sobre `data/raw/sample_data.parquet` (20 % del dataset, `
 - **Descartadas por redundancia o degeneración:** 
 `city`, `poi_tt_type_name_super`, `poi_tt_type_code`, `country_code`, `duet_display`, `stitch_display`.
 - **Target modelado:** `log(1 + play_count)`.
+
+#### Implementaciones pendientes
+
 - **Preparación (`notebooks/02-preparacion.py`, pandas, `.pipe()`):**
   `select_columns → cast_types → impute_numericals → drop_residual_nulls`.
   - `cast_types`: booleanas a `boolean` nullable (evita convertir nulos a
@@ -81,13 +82,15 @@ todo el pipeline opera sobre `data/raw/sample_data.parquet` (20 % del dataset, `
   - `impute_numericals`: univariada por columna, mediana si |skew| > 1,
     media en caso contrario (Little & Rubin, 2019).
   - Salida prevista: `data/processed/data_clean.parquet` (hoy solo se escribe
-    si se descomenta la última celda; no versionado).
+    si se descomenta la última celda; no versionado). [TODO]
+
 - **Validaciones a implementar:** esquema de columnas y tipos; rango de
   `duration`, `music_duration` y `vq_score`; ausencia de columnas de
   engagement y de usuario en la matriz de features; proporción de nulos por
   columna antes de imputar; unicidad de `id`.
 
 ### Supuestos
+
 
 - Imputar solo numéricas es suficiente; las nominales con nulos se agrupan
   (`other`/`unknown`) o se descartan.
@@ -100,15 +103,12 @@ todo el pipeline opera sobre `data/raw/sample_data.parquet` (20 % del dataset, `
 
 ### Preguntas pendientes
 
-- ¿`log(1 + y)` o Box-Cox? Se decidirá comparando residuales.
-- ¿Umbral para agrupar colas en `other` en `address`, `city_code`,
-  `poi_tt_type_name_*` y `diversification_id`?
+- ¿`log(1 + y)` o Box-Cox / yeo-jhonson? Se decidirá comparando residuales.
+- ¿Umbral para agrupar colas en `other` en `address`, `city_code`, `poi_tt_type_name_*` y `diversification_id`?
 - ¿`music_title` vs. `music_id`: se conserva uno o los dos?
 - ¿Bandera `no_vq` para `vq_score == 0` o discretización?
-- ¿Es el 15 % descartado por nulos un sesgo sistemático (p. ej., videos sin
-  POI o sin música)?
-- ¿Cómo se representa `challenges` (lista JSON de hashtags) y `desc` (texto
-  libre con menciones y hashtags) como features?
+- ¿Es el 15 % descartado por nulos un sesgo sistemático (p. ej., videos sin POI o sin música)?
+- ¿Cómo se representa `challenges` (lista JSON de hashtags) y `desc` (texto libre con menciones y hashtags) como features?
 
 
 ### Estrategia de particiones
@@ -144,13 +144,14 @@ Alternativa a evaluar: partición temporal por `create_time` para simular
 - **Métrica principal:** RMSLE. **Secundarias:** MAE en escala log y
   correlación de Spearman (mide si el modelo ordena bien los videos, que es
   lo que importa para discriminar órdenes de magnitud).
-- **Salida del entrenamiento:** métricas en validación y prueba por modelo,
+%% - **Salida del entrenamiento:** métricas en validación y prueba por modelo,
   importancia de variables (permutación / SHAP) para responder el objetivo 5
-  (qué palancas controlables tienen efecto) y el artefacto del mejor.
+  (qué palancas controlables tienen efecto) y el artefacto del mejor. %%
 - **Artefacto esperado:** un solo objeto serializado (`joblib`) con el
   preprocesador (encoders, imputadores, transformación del target) y el
   estimador, más un `metadata.json` con versión, fecha, lista de features,
-  hash del dataset y métricas.
+  hash del dataset y métricas, esto en caso de que el modelo pertenezca al ecosistema de scikit-learn.
+  en caso contrario se necesita mas investigacion sobre como se guardan los artefactos o modelos (e.g pytorch models, xgboost, etc.)
 
 ### Supuestos
 
@@ -178,7 +179,7 @@ Alternativa a evaluar: partición temporal por `create_time` para simular
 
 ### Estado actual (evidencia)
 
-- `data/raw/get_data.py`: descarga desde Hugging Face con `datasets`,
+- `data/raw/get_data.py`: descarga desde Hugging Face con `datasets`, (oculto por el .gitignore)
   escribe `data.parquet` (~9 GB) y genera `sample_data.parquet` (20 %).
 - `notebooks/01-eda.py` y `notebooks/02-preparacion.py` (marimo, con exports
   a Jupyter): EDA y pipeline de preparación factorizado en funciones
@@ -194,7 +195,7 @@ Alternativa a evaluar: partición temporal por `create_time` para simular
 | Componente | Responsabilidad | Estado |
 |---|---|---|
 | `src/tee/data.py` | Carga de Parquet y validaciones de esquema (Contrato 1) | por crear |
-| `src/tee/prepare.py` | Funciones del pipeline actual, extraídas de `02-preparacion.py` | por migrar |
+| `src/tee/prepare.py` | Funciones del pipeline actual, extraídas de `02-preparacion.py` | por migrar/refactorizar |
 | `src/tee/features.py` | Conteo/longitud de hashtags (`desc`, `challenges`), target/frequency encoding (`music_id`, `poi_id`, `poi_category`), agrupación `other`, bandera `no_vq` | por crear |
 | `src/tee/train.py` | Split, baselines, entrenamiento de las tres familias, evaluación, serialización | por crear |
 | `src/tee/predict.py` | Carga del artefacto e inferencia sobre un `DataFrame` (Contrato 2) | por crear |
@@ -233,7 +234,7 @@ la validación.
 **Contrato 2 — Entrada de inferencia (consumidor → modelo).** Una fila (o un
 `DataFrame`) con las 28 features en los mismos tipos; se permiten nulos en
 nominales (se mapean a `other`/`unknown`) pero no en numéricas. El modelo
-devuelve la predicción en escala log y en escala original (`expm1`).
+devuelve la predicción en escala log y en escala original (`expm1`). (sujeto a cambios por las features)
 
 **Contrato 3 — Artefacto.** `model_vX.Y.Z.joblib` con preprocesador y
 estimador en un solo `Pipeline`, acompañado de `metadata.json`:
@@ -244,8 +245,111 @@ de magnitud (bucket) y, si el modelo lo permite, un rango (p. ej. cuantiles
 10–90 o intervalo derivado del error en validación). Opcional: top-k
 features que más empujan la estimación (objetivo 5).
 
-- *Pregunta pendiente:* ¿la entrada del consumidor se captura con
-  `music_id`/`poi_id` numéricos o con nombres que hay que resolver?
 - *Pregunta pendiente:* ¿`challenges` entra como lista de strings y
   `features.py` la parsea, o el consumidor ya manda los conteos?
 
+## 6. Forma de operación
+
+**Entrenamiento: offline.** El dataset es un *snapshot* estático (primavera
+2025) y no hay flujo de datos nuevos; reentrenar solo tiene sentido cuando
+cambie el conjunto de features, se escale al dataset completo o llegue una
+nueva versión del dataset. Aprendizaje incremental no aporta nada aquí y
+complicaría la reproducibilidad, que es un objetivo explícito del proyecto.
+
+**Inferencia: bajo demanda.** El caso de uso es una persona que está por
+publicar y quiere una estimación para *ese* video; la entrada no existe hasta
+que ella la configura, así que no se puede precomputar. Se mantiene un modo
+por lote (un `DataFrame` de varios videos) porque es el mismo código y sirve
+para evaluación y para el escenario "varios videos planeados".
+
+- *Supuesto:* volumen de consultas bajo (decenas al día), latencia no crítica.
+- *Supuesto:* el dominio de entrada se mantiene (trending, EE. UU.); si el
+  consumidor manda videos fuera de ese dominio, la estimación no es válida y
+  conviene señalarlo.## 7. Patrón de serving
+
+| Patrón | A favor | En contra para TEE |
+|---|---|---|
+| Model-as-Service (API HTTP) | Centraliza versión y monitoreo; múltiples clientes | Requiere servicio, hosting y contrato HTTP que aún no existen |
+| Model-as-Dependency (artefacto cargado en el proceso consumidor) | Mínimo componente nuevo; misma máquina; fácil de probar; reproducible con `uv` | Actualizar el modelo implica redistribuir el artefacto |
+| Precompute (tabla de predicciones) | Latencia cero | Imposible: la entrada es una combinación nueva por video |
+
+**Decisión inicial: Model-as-Dependency.** El consumidor inicial es un
+script/formulario ligero (CLI o Streamlit) que carga `model_vX.Y.Z.joblib`
+mediante `src/tee/predict.py`. Con un solo consumidor y bajo volumen, un
+servicio HTTP sería infraestructura sin beneficio. Migrar a Model-as-Service
+es el siguiente paso natural si aparece un segundo consumidor; el Contrato 2
+y el artefacto ya están diseñados para que ese cambio no toque el modelo.
+
+## 8. Diagrama
+
+```mermaid
+flowchart LR
+    HF[(Hugging Face<br/>TikTok-10M ≈6.65 M)] --> GD[get_data.py<br/>]
+    GD --> RAW[(data/raw/<br/>data.parquet)]
+    RAW --> PREP[prepare.py<br/>select → cast → impute → drop]
+    PREP --> FE[features.py<br/>hashtags, encodings, other, no_vq]
+    FE --> PROC[(data/processed/<br/>data_clean.parquet)]
+    PROC --> SPLIT[split estratificado<br/>80/10/10]
+    SPLIT --> TRAIN[train.py<br/>baselines · Ridge · boosting · alt]
+    TRAIN --> EVAL{RMSLE · MAE log · Spearman<br/>supera el baseline model?}
+    EVAL -- no --> FE
+    EVAL -- sí --> ART[(model_vX.joblib<br/>+ metadata.json)]
+    ART --> PRED[predict.py]
+    USER[Persona creadora<br/>configura el video] --> FORM[CLI / formulario]
+    FORM --> PRED
+    PRED --> OUT[Predicción + orden de magnitud<br/>+ rango ]
+    OUT --> USER
+```
+
+## 9. Riesgo prioritario
+
+**Brecha.** El EDA sugiere que las features a priori tienen poca señal: las
+booleanas casi no discriminan y las numéricas no muestran relación con el
+target. Toda la apuesta recae en texto, hashtags, música y POI, que todavía
+no tienen ingeniería de features, y no sabemos si el modelo superará a la
+mediana por categoría. La literatura (Khosla et al., 2014) advierte que sin
+señal social el problema es sustancialmente más difícil.
+
+**Consecuencia.** Podríamos invertir en boosting, encodings, embeddings y
+consumidor para terminar con un modelo que no aporta sobre un baseline
+trivial, sin haberlo detectado a tiempo. Además, sin un piso medido, no se
+puede responder la pregunta de fondo del proyecto (cuánto explica lo
+controlable), que es un resultado válido incluso si el modelo es débil.
+
+**Siguiente incremento.** Persistir `data/processed/data_clean.parquet`,
+implementar el split estratificado y los tres baselines triviales, y entrenar
+un Ridge con solo las ~5 nominales de baja cardinalidad más las numéricas.
+Eso da en pocas horas un piso de RMSLE y Spearman contra el cual medir cada
+feature nueva. Si Ridge no supera la mediana por categoría, se prioriza la
+ingeniería de `desc`/`challenges` antes de cualquier otra cosa.
+
+## 10. Fuentes y supuestos por validar
+
+### Fuentes
+
+- Dataset: https://huggingface.co/datasets/The-data-company/TikTok-10M
+- Diccionario de datos del proyecto: [`data/README.md`](../data/README.md)
+- Propuesta del proyecto: [`docs/propuesta.md`](propuesta.md)
+- Informe del proyecto: `informe-final.ipynb` (ajustar ruta según dónde quede
+  en el repo)
+- Chen et al. (2016), *Micro Tells Macro*; Khosla et al. (2014), *What Makes
+  an Image Popular?*; Ling et al. (2022), *Slapping Cats, Bopping Heads, and
+  Oreo Shakes*; Szabo & Huberman (2010), *Predicting the Popularity of Online
+  Content*; Little & Rubin (2019), *Statistical Analysis with Missing Data*.
+- Clase 9 del curso: tres niveles del software de ML.
+
+### Por validar
+
+- [ ] Términos exactos de la licencia "other" del dataset y si permite un
+      consumidor distribuible.
+- [ ] Que el 15 % descartado por nulos no introduce sesgo sistemático.
+- [ ] Que la muestra del 20 % reproduce las distribuciones del total.
+- [ ] Que `music_title` y `music_id` no aportan información redundante.
+- [ ] Umbral numérico del criterio de aceptación (tras baselines).
+- [ ] Elección `log1p` vs. Box-Cox.
+- [ ] Split por cuantiles vs. temporal.
+- [ ] Si el consumidor necesita resolver nombres de música/POI a ids.
+- [ ] Sección "Target y features iniciales" de `data/README.md`: aún lista
+      `digg_count`, `share_count`, `comment_count`, `user_id` y
+      `user_verified` como features candidatas; contradice la decisión de
+      excluirlas por leakage y privacidad y debe corregirse.
