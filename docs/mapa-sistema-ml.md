@@ -118,3 +118,134 @@ Train / busqued/ prueba = 80 / 10 / 10, estratificado por cuantiles de
 Alternativa a evaluar: partición temporal por `create_time` para simular
 "predecir videos futuros".
 
+## 3. Nivel del modelo
+
+### Evidencia del EDA
+
+- Las numéricas no muestran relación sencilla con el target y las booleanas
+  discriminan poco: la señal, si existe, está en texto (`desc`), hashtags
+  (`challenges`), música y POI. Conclusión del EDA: el énfasis debe ir en la
+  ingeniería de features de las variables de texto.
+- El target requiere transformación y métricas robustas a colas pesadas.
+- Alta cardinalidad en `music_id`, `poi_id`, `challenges`, `desc`: requiere
+  target/frequency encoding, embeddings o extracción de features textuales.
+
+### Decisión inicial
+
+- **Tarea:** regresión sobre `log(1 + play_count)`. Formulación alternativa
+  a evaluar: clasificación ordinal por orden de magnitud (10³, 10⁴, 10⁵, 10⁶+).
+- **Baselines triviales:** media, mediana y mediana por categoría
+  (`poi_category`) en escala log.
+- **Familias de modelos (objetivo específico 3: al menos tres):**
+  1. Lineal regularizada (Ridge/Lasso) — baseline interpretable.
+  2. Gradient boosting (LightGBM o XGBoost) — modelo principal.
+  3. Alternativa por definir (clasificación ordinal, o un modelo sobre
+     embeddings de texto).
+- **Métrica principal:** RMSLE. **Secundarias:** MAE en escala log y
+  correlación de Spearman (mide si el modelo ordena bien los videos, que es
+  lo que importa para discriminar órdenes de magnitud).
+- **Salida del entrenamiento:** métricas en validación y prueba por modelo,
+  importancia de variables (permutación / SHAP) para responder el objetivo 5
+  (qué palancas controlables tienen efecto) y el artefacto del mejor.
+- **Artefacto esperado:** un solo objeto serializado (`joblib`) con el
+  preprocesador (encoders, imputadores, transformación del target) y el
+  estimador, más un `metadata.json` con versión, fecha, lista de features,
+  hash del dataset y métricas.
+
+### Supuestos
+
+- Las variables a priori explican una fracción modesta pero significativa de
+  la varianza (hipótesis del proyecto); el modelo será útil para discriminar
+  órdenes de magnitud, no para valores puntuales.
+- Boosting capturará interacciones que un modelo lineal no.
+- Existe un "techo de predictibilidad" sin señal social; cuantificarlo es un
+  resultado del proyecto, no un fracaso del modelo.
+
+### Preguntas pendientes
+
+- **Criterio de aceptación:** no puede fijarse hasta correr los baselines.
+  Propuesta: "supera la mediana por categoría en RMSLE y alcanza Spearman
+  claramente positivo en prueba"; el umbral numérico se define tras el
+  primer experimento.
+- ¿LightGBM o XGBoost? Se decide por tiempo de entrenamiento en ~1.7 M filas.
+- ¿Target encoding con validación anidada para `music_id` y `poi_id` (riesgo
+  de leakage dentro del fold)?
+- ¿TF-IDF o embeddings para `desc`? Depende de costo computacional.
+- ¿Cómo tratar el desbalance de las booleanas: se dejan, se combinan en un
+  índice de "propagación habilitada" o se descartan?
+
+## 4. Nivel de código
+
+### Estado actual (evidencia)
+
+- `data/raw/get_data.py`: descarga desde Hugging Face con `datasets`,
+  escribe `data.parquet` (~9 GB) y genera `sample_data.parquet` (20 %).
+- `notebooks/01-eda.py` y `notebooks/02-preparacion.py` (marimo, con exports
+  a Jupyter): EDA y pipeline de preparación factorizado en funciones
+  encadenables con `.pipe()`.
+- `pyproject.toml` + `uv.lock`: dependencias reproducibles con `uv sync`;
+  Python ≥ 3.12.
+- `docs/propuesta.md`: contexto, objetivos, EDA y siguientes pasos.
+- La salida de la preparación **no es persistente** todavía: los notebooks
+  son para EDA y prueba del pipeline inicial.
+
+### Componentes probables
+
+| Componente | Responsabilidad | Estado |
+|---|---|---|
+| `src/tee/data.py` | Carga de Parquet y validaciones de esquema (Contrato 1) | por crear |
+| `src/tee/prepare.py` | Funciones del pipeline actual, extraídas de `02-preparacion.py` | por migrar |
+| `src/tee/features.py` | Conteo/longitud de hashtags (`desc`, `challenges`), target/frequency encoding (`music_id`, `poi_id`, `poi_category`), agrupación `other`, bandera `no_vq` | por crear |
+| `src/tee/train.py` | Split, baselines, entrenamiento de las tres familias, evaluación, serialización | por crear |
+| `src/tee/predict.py` | Carga del artefacto e inferencia sobre un `DataFrame` (Contrato 2) | por crear |
+| `app/` o CLI | Consumidor: formulario mínimo que arma el vector de entrada | por definir |
+
+### Dependencias o configuración por investigar
+
+- `lightgbm` / `xgboost`, `scikit-learn`, `shap`, `category_encoders` (o
+  target encoding propio); posiblemente `sentence-transformers` si se usan
+  embeddings para `desc`.
+- Configuración en `config.toml` o variables de entorno: rutas de datos,
+  `random_state`, fracción de muestra, umbrales de agrupación, cuantiles del
+  split.
+- Cómo persistir `data/processed/` sin versionarlo (sigue en `.gitignore`).
+- Migrar del formato marimo a módulos importables sin perder la ejecución
+  interactiva.
+
+### Señales que convendría registrar
+
+- Filas de entrada, filas descartadas y proporción de nulos por columna en
+  cada corrida de preparación (hoy sabemos que es ≈15 %, hay que vigilarlo).
+- Métricas por modelo y por fold; tiempo de entrenamiento.
+- Versión del artefacto usada en cada predicción y distribución de las
+  predicciones (para detectar deriva de entrada más adelante).
+- Proporción de entradas que caen en `other`/`unknown` en inferencia
+  (indica que el consumidor manda valores fuera del dominio de entrenamiento).
+
+## 5. Interfaces
+
+**Contrato 1 — Datos preparados → entrenamiento.** Parquet con exactamente
+28 columnas + `play_count`; booleanas como `bool`, `*_id` como `category`,
+nominales como `string`, `duration`/`music_duration`/`vq_score` como `float`.
+Cualquier columna de engagement, de usuario o temporal presente hace fallar
+la validación.
+
+**Contrato 2 — Entrada de inferencia (consumidor → modelo).** Una fila (o un
+`DataFrame`) con las 28 features en los mismos tipos; se permiten nulos en
+nominales (se mapean a `other`/`unknown`) pero no en numéricas. El modelo
+devuelve la predicción en escala log y en escala original (`expm1`).
+
+**Contrato 3 — Artefacto.** `model_vX.Y.Z.joblib` con preprocesador y
+estimador en un solo `Pipeline`, acompañado de `metadata.json`:
+`{version, fecha, features, transformacion_target, metricas_val, metricas_test, hash_dataset, random_state}`.
+
+**Contrato 4 — Salida hacia la persona usuaria.** Predicción puntual, orden
+de magnitud (bucket) y, si el modelo lo permite, un rango (p. ej. cuantiles
+10–90 o intervalo derivado del error en validación). Opcional: top-k
+features que más empujan la estimación (objetivo 5).
+
+- *Pregunta pendiente:* ¿la entrada del consumidor se captura con
+  `music_id`/`poi_id` numéricos o con nombres que hay que resolver?
+- *Pregunta pendiente:* ¿`challenges` entra como lista de strings y
+  `features.py` la parsea, o el consumidor ya manda los conteos?
+
