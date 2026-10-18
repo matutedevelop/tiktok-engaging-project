@@ -7,6 +7,8 @@ with app.setup:
     import marimo as mo
     import pandas as pd
     import numpy as np
+    from pathlib import Path
+    import typer
 
 
 @app.cell
@@ -26,16 +28,16 @@ def _():
         "poi_tt_type_name_super",
         "poi_tt_type_code",
         "country_code",
+        "item_control_can_repost",
+        "official_item",
+        "original_item",
+        "share_enabled",
     ]
 
     BOOLEAN_FEATURES = [
         "duet_enabled",
         "is_ad",
         "item_mute",
-        "item_control_can_repost",
-        "official_item",
-        "original_item",
-        "share_enabled",
         "stitch_enabled",
         "music_original",
     ]
@@ -67,6 +69,8 @@ def _():
     KEEP_COLUMNS = (
         BOOLEAN_FEATURES + NOMINAL_FEATURES + NUMERICAL_FEATURES + [TARGET]
     )
+
+    ROOT = Path(__file__).parent.parent
     return (
         BOOLEAN_FEATURES,
         DROP_COLUMNS,
@@ -74,13 +78,14 @@ def _():
         KEEP_COLUMNS,
         NOMINAL_FEATURES,
         NUMERICAL_FEATURES,
+        ROOT,
         TARGET,
     )
 
 
 @app.cell
-def _():
-    df_raw = pd.read_parquet("data/raw/sample_data.parquet")
+def _(ROOT):
+    df_raw = pd.read_parquet(ROOT / "data" / "raw" / "sample_data.parquet")
     return (df_raw,)
 
 
@@ -143,7 +148,7 @@ def _(
         }
         for _c in BOOLEAN_FEATURES:
             _s = _df[_c]
-            if _s.dtype == object:
+            if pd.api.types.is_string_dtype(_s):
                 _s = _s.astype(str).str.strip().str.lower().map(_map)
             _df[_c] = _s.astype("bool")
 
@@ -168,7 +173,7 @@ def _(
 @app.cell
 def _():
     mo.md("""
-    ## 3. Imputación de numéricas y de `desc`
+    ## 3. Imputación de numéricas y de categoricas
 
 
     en retrospectiva, consideramos como algo mas prudente el imputar las descripciones vacias con `'NA'`
@@ -178,8 +183,20 @@ def _():
 
 @app.function
 def cat_imputation(df: pd.DataFrame) -> pd.DataFrame:
+
+    # We impute nulls by mode or by `Null` value based on the proportion of nulls of each variable
+    # and the context avaliable for each variable
     _df = df.copy(deep=True)
-    _df["desc"] = _df.loc[_df["desc"].isna(), "desc"].fillna("NA")
+    _df["desc"] = _df["desc"].fillna("NA")
+    _df["poi_tt_type_name_tiny"] = _df["poi_tt_type_name_tiny"].fillna(
+        _df["poi_tt_type_name_tiny"].mode()[0]
+    )
+    _df["diversification_id"] = (
+        _df["diversification_id"]
+        .astype("string")
+        .fillna("Unknown")
+        .astype("category")
+    )
     return _df
 
 
@@ -216,8 +233,7 @@ def _():
 
 @app.function
 def drop_nulls(df: pd.DataFrame) -> pd.DataFrame:
-    _df = df.copy(deep=True)
-    return _df.dropna()
+    return df.dropna()
 
 
 @app.cell
@@ -245,6 +261,39 @@ def _(df_final):
     # Descomenta para guardar el resultado
     # df_final.to_parquet("data_clean.parquet", index=False)
     df_final.describe(include="all").T
+    return
+
+
+@app.cell
+def _(ROOT, drop_columns, fix_dtypes, numerical_imputation):
+    app = typer.Typer()
+
+    @app.command()
+    def sample():
+        df = pd.read_parquet(ROOT / "data" / "raw" / "sample_data.parquet")
+        (
+            df.pipe(drop_columns)
+            .pipe(fix_dtypes)
+            .pipe(numerical_imputation)
+            .pipe(cat_imputation)
+            .pipe(drop_nulls)
+            .to_parquet(ROOT / "data" / "interim" / "sample_data.parquet")
+        )
+
+    @app.command()
+    def complete():
+        df = pd.read_parquet(ROOT / "data" / "raw" / "data.parquet")
+        (
+            df.pipe(drop_columns)
+            .pipe(fix_dtypes)
+            .pipe(numerical_imputation)
+            .pipe(cat_imputation)
+            .pipe(drop_nulls)
+            .to_parquet(ROOT / "data" / "interim" / "data.parquet")
+        )
+
+    if mo.app_meta().mode == "script":
+        app()
     return
 
 
