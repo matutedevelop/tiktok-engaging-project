@@ -26,16 +26,16 @@ def _():
         "poi_tt_type_name_super",
         "poi_tt_type_code",
         "country_code",
+        "item_control_can_repost",
+        "official_item",
+        "original_item",
+        "share_enabled",
     ]
 
     BOOLEAN_FEATURES = [
         "duet_enabled",
         "is_ad",
         "item_mute",
-        "item_control_can_repost",
-        "official_item",
-        "original_item",
-        "share_enabled",
         "stitch_enabled",
         "music_original",
     ]
@@ -143,7 +143,7 @@ def _(
         }
         for _c in BOOLEAN_FEATURES:
             _s = _df[_c]
-            if _s.dtype == object:
+            if pd.api.types.is_string_dtype(_s):
                 _s = _s.astype(str).str.strip().str.lower().map(_map)
             _df[_c] = _s.astype("bool")
 
@@ -168,7 +168,7 @@ def _(
 @app.cell
 def _():
     mo.md("""
-    ## 3. Imputación de numéricas y de `desc`
+    ## 3. Imputación de numéricas y de categoricas
 
 
     en retrospectiva, consideramos como algo mas prudente el imputar las descripciones vacias con `'NA'`
@@ -178,8 +178,20 @@ def _():
 
 @app.function
 def cat_imputation(df: pd.DataFrame) -> pd.DataFrame:
+
+    # We impute nulls by mode or by `Null` value based on the proportion of nulls of each variable
+    # and the context avaliable for each variable
     _df = df.copy(deep=True)
-    _df["desc"] = _df.loc[_df["desc"].isna(), "desc"].fillna("NA")
+    _df["desc"] = _df["desc"].fillna("NA")
+    _df["poi_tt_type_name_tiny"] = _df["poi_tt_type_name_tiny"].fillna(
+        _df["poi_tt_type_name_tiny"].mode()[0]
+    )
+    _df["diversification_id"] = (
+        _df["diversification_id"]
+        .astype("string")
+        .fillna("Unknown")
+        .astype("category")
+    )
     return _df
 
 
@@ -216,8 +228,7 @@ def _():
 
 @app.function
 def drop_nulls(df: pd.DataFrame) -> pd.DataFrame:
-    _df = df.copy(deep=True)
-    return _df.dropna()
+    return df.dropna()
 
 
 @app.cell
