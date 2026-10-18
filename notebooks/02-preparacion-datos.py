@@ -7,6 +7,8 @@ with app.setup:
     import marimo as mo
     import pandas as pd
     import numpy as np
+    from pathlib import Path
+    import typer
 
 
 @app.cell
@@ -67,6 +69,8 @@ def _():
     KEEP_COLUMNS = (
         BOOLEAN_FEATURES + NOMINAL_FEATURES + NUMERICAL_FEATURES + [TARGET]
     )
+
+    ROOT = Path(__file__).parent.parent
     return (
         BOOLEAN_FEATURES,
         DROP_COLUMNS,
@@ -74,13 +78,14 @@ def _():
         KEEP_COLUMNS,
         NOMINAL_FEATURES,
         NUMERICAL_FEATURES,
+        ROOT,
         TARGET,
     )
 
 
 @app.cell
-def _():
-    df_raw = pd.read_parquet("data/raw/sample_data.parquet")
+def _(ROOT):
+    df_raw = pd.read_parquet(ROOT / "data" / "raw" / "sample_data.parquet")
     return (df_raw,)
 
 
@@ -256,6 +261,39 @@ def _(df_final):
     # Descomenta para guardar el resultado
     # df_final.to_parquet("data_clean.parquet", index=False)
     df_final.describe(include="all").T
+    return
+
+
+@app.cell
+def _(ROOT, drop_columns, fix_dtypes, numerical_imputation):
+    app = typer.Typer()
+
+    @app.command()
+    def sample():
+        df = pd.read_parquet(ROOT / "data" / "raw" / "sample_data.parquet")
+        (
+            df.pipe(drop_columns)
+            .pipe(fix_dtypes)
+            .pipe(numerical_imputation)
+            .pipe(cat_imputation)
+            .pipe(drop_nulls)
+            .to_parquet(ROOT / "data" / "interim" / "sample_data.parquet")
+        )
+
+    @app.command()
+    def complete():
+        df = pd.read_parquet(ROOT / "data" / "raw" / "data.parquet")
+        (
+            df.pipe(drop_columns)
+            .pipe(fix_dtypes)
+            .pipe(numerical_imputation)
+            .pipe(cat_imputation)
+            .pipe(drop_nulls)
+            .to_parquet(ROOT / "data" / "interim" / "data.parquet")
+        )
+
+    if mo.app_meta().mode == "script":
+        app()
     return
 
 
