@@ -1,13 +1,16 @@
 import marimo
 
 __generated_with = "0.24.2"
-app = marimo.App(width="medium")
+app = marimo.App(width="medium", css_file="custom.css")
 
 with app.setup:
     import json
     from collections import Counter
     from pathlib import Path
     from time import perf_counter
+    import os
+    from dotenv import load_dotenv
+    from copy import deepcopy
 
     import marimo as mo
     import numpy as np
@@ -23,12 +26,24 @@ with app.setup:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.impute import SimpleImputer
     from sklearn.linear_model import Ridge
-    from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
+    from sklearn.metrics import (
+        mean_absolute_error,
+        r2_score,
+        root_mean_squared_error,
+    )
     from sklearn.model_selection import train_test_split
     from sklearn.pipeline import Pipeline
-    from sklearn.preprocessing import OneHotEncoder, StandardScaler, TargetEncoder
+    from sklearn.preprocessing import (
+        OneHotEncoder,
+        StandardScaler,
+        TargetEncoder,
+    )
+    import mlflow
+    from mlflow.models import infer_signature
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    load_dotenv()
 
     SEED = 42
     N_FILAS = 300_000
@@ -73,8 +88,12 @@ with app.setup:
         "no_vq",
         "dif_duracion_musica",
     ]
-    NUM_PIPELINE_FEATURES = NUMERICAL_FEATURES + BOOLEAN_FEATURES + DERIVED_FEATURES
-    FEATURES = NUM_PIPELINE_FEATURES + OHE_FEATURES + TE_FEATURES + TEXT_FEATURES
+    NUM_PIPELINE_FEATURES = (
+        NUMERICAL_FEATURES + BOOLEAN_FEATURES + DERIVED_FEATURES
+    )
+    FEATURES = (
+        NUM_PIPELINE_FEATURES + OHE_FEATURES + TE_FEATURES + TEXT_FEATURES
+    )
 
     COLUMNAS_LECTURA = (
         [TARGET_RAW, "duet_info_duet_from_id"]
@@ -84,7 +103,14 @@ with app.setup:
         + OHE_FEATURES
         + TE_FEATURES
     )
+    # ***
     FAMILIAS = ("ridge", "random_forest", "lightgbm")
+
+    EXPERIMENT_NAME = (
+        "/Shared/pcd/otono-2026-proyecto/tiktok-engaging-estimator"
+    )
+    REGISTRY_URI = os.getenv("REGISTRY_URI")
+    TRACKING_URI = os.getenv("TRACKING_URI")
 
 
 @app.cell(hide_code=True)
@@ -228,6 +254,8 @@ def contar_challenges(valor) -> int:
 
 
 @app.function
+# ***
+# TODO: turn this function into a match case to allow to have diferent preparations
 def preparar_features(df: pd.DataFrame) -> pd.DataFrame:
     """Transformaciones sin estado: no aprenden nada de los datos."""
     _df = pd.DataFrame(index=df.index)
@@ -240,21 +268,31 @@ def preparar_features(df: pd.DataFrame) -> pd.DataFrame:
 
     _desc = df["desc"].astype("string").fillna("")
     _df["desc_len"] = _desc.str.len().astype(float)
-    _df["desc_n_palabras"] = _desc.str.split().str.len().fillna(0).astype(float)
+    _df["desc_n_palabras"] = (
+        _desc.str.split().str.len().fillna(0).astype(float)
+    )
     _df["desc_n_hashtags"] = _desc.str.count(r"#\w+").astype(float)
     _df["desc_n_menciones"] = _desc.str.count(r"@\w+").astype(float)
-    _df["n_challenges"] = df["challenges"].map(contar_challenges).astype(float)
-    _duet_from = pd.to_numeric(df["duet_info_duet_from_id"].astype(str), errors="coerce")
+    _df["n_challenges"] = (
+        df["challenges"].map(contar_challenges).astype(float)
+    )
+    _duet_from = pd.to_numeric(
+        df["duet_info_duet_from_id"].astype(str), errors="coerce"
+    )
     _df["es_duet"] = (_duet_from.fillna(0) != 0).astype(float)
     _df["no_vq"] = (_df["vq_score"] == 0).astype(float)
-    _df["dif_duracion_musica"] = (_df["duration"] - _df["music_duration"]).abs()
+    _df["dif_duracion_musica"] = (
+        _df["duration"] - _df["music_duration"]
+    ).abs()
 
     for _c in OHE_FEATURES + TE_FEATURES:
         _df[_c] = df[_c].astype(str)
 
     # Texto crudo: lo vectorizan TF-IDF y la frecuencia de hashtags dentro del Pipeline
     _df["desc"] = _desc.astype(str)
-    _df["challenges"] = df["challenges"].astype("string").fillna("[]").astype(str)
+    _df["challenges"] = (
+        df["challenges"].astype("string").fillna("[]").astype(str)
+    )
 
     _df[TARGET] = np.log1p(df[TARGET_RAW].astype(float))
     return _df[FEATURES + [TARGET]]
@@ -299,38 +337,46 @@ def _(datos):
     desarrollo, test = train_test_split(
         datos, test_size=0.10, stratify=_estratos, random_state=SEED
     )
-    _estratos_dev = pd.qcut(desarrollo[TARGET], q=10, labels=False, duplicates="drop")
-    train, validacion = train_test_split(
+    _estratos_dev = pd.qcut(
+        desarrollo[TARGET], q=10, labels=False, duplicates="drop"
+    )
+    train, validation = train_test_split(
         desarrollo, test_size=1 / 9, stratify=_estratos_dev, random_state=SEED
     )
 
     pd.DataFrame(
         {
-            "filas": [len(train), len(validacion), len(test)],
+            "filas": [len(train), len(validation), len(test)],
             "media_y": [
                 train[TARGET].mean(),
-                validacion[TARGET].mean(),
+                validation[TARGET].mean(),
                 test[TARGET].mean(),
             ],
             "std_y": [
                 train[TARGET].std(),
-                validacion[TARGET].std(),
+                validation[TARGET].std(),
                 test[TARGET].std(),
             ],
         },
-        index=["train", "validacion", "test"],
+        index=["train", "validation", "test"],
     )
-    return desarrollo, test, train, validacion
+    return desarrollo, test, train, validation
 
 
 @app.function
-def evaluar(y_real, y_pred) -> dict:
+def evaluate_num_pred(y_real, y_pred) -> dict:
+    # TODO create  a cat_evaluate
     return {
         "rmsle": root_mean_squared_error(y_real, y_pred),
         "r2": r2_score(y_real, y_pred),
         "mae_log": mean_absolute_error(y_real, y_pred),
         "spearman": spearmanr(y_real, y_pred).statistic,
     }
+
+
+@app.function
+def evaluate_cat_pred(y_real, y_pred) -> dict:
+    return NotImplemented
 
 
 @app.cell(hide_code=True)
@@ -346,7 +392,7 @@ def _():
 
 
 @app.cell
-def _(test, train, validacion):
+def _(test, train, validation):
     _media = train[TARGET].mean()
     _mediana = train[TARGET].median()
     _mediana_cat = train.groupby("poi_category")[TARGET].median()
@@ -360,13 +406,13 @@ def _(test, train, validacion):
         ("mediana", lambda df: np.full(len(df), _mediana)),
         ("mediana_por_poi_category", _pred_cat),
     ]:
-        for _part, _df in [("validacion", validacion), ("test", test)]:
-            _m = evaluar(_df[TARGET], _pred(_df))
+        for _part, _df in [("validacion", validation), ("test", test)]:
+            _m = evaluate_num_pred(_df[TARGET], _pred(_df))
             _filas.append({"baseline": _nombre, "particion": _part, **_m})
 
     baselines = pd.DataFrame(_filas)
     baselines
-    return (baselines,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -431,25 +477,34 @@ class HashtagFrequency(BaseEstimator, TransformerMixin):
                 _filas.append((0.0, 0.0, 0.0))
                 continue
             _frec = np.log1p([self.conteos_.get(h, 0) for h in _hashtags])
-            _filas.append((_frec.mean(), _frec.max(), float(np.mean(_frec == 0))))
+            _filas.append(
+                (_frec.mean(), _frec.max(), float(np.mean(_frec == 0)))
+            )
         return np.asarray(_filas, dtype=float)
 
 
 @app.function
 def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
+    # TODO: turn this function into a match case to allow having diferent preprocessing pipelines
     preprocesamiento = ColumnTransformer(
         [
             (
                 "frecuencias",
                 Pipeline(
-                    [("contar", FrequencyEncoder()), ("escalar", StandardScaler())]
+                    [
+                        ("contar", FrequencyEncoder()),
+                        ("escalar", StandardScaler()),
+                    ]
                 ),
                 FREQ_FEATURES,
             ),
             (
                 "popularidad_hashtags",
                 Pipeline(
-                    [("contar", HashtagFrequency()), ("escalar", StandardScaler())]
+                    [
+                        ("contar", HashtagFrequency()),
+                        ("escalar", StandardScaler()),
+                    ]
                 ),
                 "challenges",
             ),
@@ -466,7 +521,12 @@ def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
                                 sublinear_tf=True,
                             ),
                         ),
-                        ("svd", TruncatedSVD(n_components=50, random_state=SEED)),
+                        (
+                            "svd",
+                            TruncatedSVD(
+                                n_components=50, random_state=SEED
+                            ),
+                        ),
                         ("escalar", StandardScaler()),
                     ]
                 ),
@@ -479,10 +539,17 @@ def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
                         (
                             "tfidf",
                             TfidfVectorizer(
-                                min_df=5, max_features=20_000, sublinear_tf=True
+                                min_df=5,
+                                max_features=20_000,
+                                sublinear_tf=True,
                             ),
                         ),
-                        ("svd", TruncatedSVD(n_components=30, random_state=SEED)),
+                        (
+                            "svd",
+                            TruncatedSVD(
+                                n_components=30, random_state=SEED
+                            ),
+                        ),
                         ("escalar", StandardScaler()),
                     ]
                 ),
@@ -492,7 +559,7 @@ def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
                 "numericas",
                 Pipeline(
                     [
-                        ("imputar", SimpleImputer(strategy="median")),
+                        # ("imputar", SimpleImputer(strategy="median")), # Esto no es necesario desde que los datos fueron previamente imputados
                         ("escalar", StandardScaler()),
                     ]
                 ),
@@ -510,13 +577,17 @@ def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
             (
                 "alta_cardinalidad",
                 TargetEncoder(
-                    target_type="continuous", cv=5, shuffle=True, random_state=SEED
+                    target_type="continuous",
+                    cv=5,
+                    shuffle=True,
+                    random_state=SEED,
                 ),
                 TE_FEATURES,
             ),
         ],
         sparse_threshold=0,
     )
+    # ***
     estimadores = {
         "ridge": Ridge,
         "random_forest": RandomForestRegressor,
@@ -526,8 +597,8 @@ def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
         raise ValueError(f"Familia no reconocida: {familia}")
     return Pipeline(
         [
-            ("preprocesamiento", preprocesamiento),
-            ("modelo", estimadores[familia](**parametros)),
+            ("preprocessing", preprocesamiento),
+            ("model", estimadores[familia](**parametros)),
         ]
     )
 
@@ -577,27 +648,46 @@ def _():
 
 @app.function
 def proponer_parametros(trial: optuna.Trial, familia: str) -> dict:
+    # ***
     if familia == "ridge":
         return {"alpha": trial.suggest_float("alpha", 1e-1, 1e5, log=True)}
     if familia == "random_forest":
         return {
-            "n_estimators": trial.suggest_int("n_estimators", 50, 200, step=50),
+            "n_estimators": trial.suggest_int(
+                "n_estimators", 50, 200, step=50
+            ),
             "max_depth": trial.suggest_int("max_depth", 8, 24),
-            "min_samples_leaf": trial.suggest_int("min_samples_leaf", 2, 100, log=True),
-            "max_features": trial.suggest_categorical("max_features", ["sqrt", 0.3, 0.5]),
+            "min_samples_leaf": trial.suggest_int(
+                "min_samples_leaf", 2, 100, log=True
+            ),
+            "max_features": trial.suggest_categorical(
+                "max_features", ["sqrt", 0.3, 0.5]
+            ),
             "max_samples": trial.suggest_float("max_samples", 0.3, 1.0),
             "random_state": SEED,
             "n_jobs": -1,
         }
     if familia == "lightgbm":
         return {
-            "n_estimators": trial.suggest_int("n_estimators", 200, 1000, step=100),
-            "learning_rate": trial.suggest_float("learning_rate", 0.02, 0.2, log=True),
-            "num_leaves": trial.suggest_int("num_leaves", 15, 255, log=True),
-            "min_child_samples": trial.suggest_int("min_child_samples", 20, 300, log=True),
+            "n_estimators": trial.suggest_int(
+                "n_estimators", 200, 1000, step=100
+            ),
+            "learning_rate": trial.suggest_float(
+                "learning_rate", 0.02, 0.2, log=True
+            ),
+            "num_leaves": trial.suggest_int(
+                "num_leaves", 15, 255, log=True
+            ),
+            "min_child_samples": trial.suggest_int(
+                "min_child_samples", 20, 300, log=True
+            ),
             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-            "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10, log=True),
+            "colsample_bytree": trial.suggest_float(
+                "colsample_bytree", 0.5, 1.0
+            ),
+            "reg_lambda": trial.suggest_float(
+                "reg_lambda", 1e-4, 10, log=True
+            ),
             "subsample_freq": 1,
             "random_state": SEED,
             "n_jobs": -1,
@@ -609,6 +699,7 @@ def proponer_parametros(trial: optuna.Trial, familia: str) -> dict:
 @app.function
 def completar_parametros(familia: str, mejores: dict) -> dict:
     """Agrega los parámetros fijos que no forman parte del espacio de búsqueda."""
+    # ***
     fijos = {
         "ridge": {},
         "random_forest": {"random_state": SEED, "n_jobs": -1},
@@ -623,41 +714,239 @@ def completar_parametros(familia: str, mejores: dict) -> dict:
 
 
 @app.function
-def crear_estudio(familia: str) -> tuple[optuna.Study, int]:
+def crear_estudio(familia: str) -> tuple[optuna.Study, int, str]:
+    # ***
     if familia == "ridge":
         rejilla = {"alpha": np.logspace(-1, 5, 13).tolist()}
         sampler = GridSampler(rejilla, seed=SEED)
-        return optuna.create_study(direction="minimize", sampler=sampler), 13
+        sampler_name = "optuna-grid"
+        return (
+            optuna.create_study(direction="minimize", sampler=sampler),
+            13,
+            sampler_name,
+        )
+
     n_trials = {"random_forest": 12, "lightgbm": 25}[familia]
     sampler = TPESampler(seed=SEED, n_startup_trials=5)
-    return optuna.create_study(direction="minimize", sampler=sampler), n_trials
+    sampler_name = "optuna-TPE"
+    return (
+        optuna.create_study(direction="minimize", sampler=sampler),
+        n_trials,
+        sampler_name,
+    )
+
+
+@app.function
+def fit_evaluate(
+    pipeline: Pipeline,
+    train: pd.DataFrame,
+    test: pd.DataFrame | None = None,
+    is_regresion: bool = True,
+) -> dict:
+    """if test is not provided it will evaluate results on training set"""
+    # TODO: do this framework agnostic
+    evaluate = evaluate_num_pred if is_regresion else evaluate_cat_pred
+
+    evaluation_data = train if test is None else test
+
+    start = perf_counter()
+    pipeline.fit(train[FEATURES], train[TARGET])
+    training_time = perf_counter() - start
+    y_pred = pipeline.predict(evaluation_data[FEATURES])
+    results = evaluate(evaluation_data[TARGET], y_pred)
+
+    return results | {"training_time": training_time}
+
+
+@app.function
+def config_mlflow():
+    mlflow.set_tracking_uri(TRACKING_URI)
+    mlflow.set_registry_uri(REGISTRY_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
+
+
+@app.function
+def mlflow_data(
+    dataframes_info: dict[str, pd.DataFrame], target: str = TARGET
+):
+
+    _datasets = []
+
+    for _df_info in dataframes_info:
+        _dataset = mlflow.data.from_pandas(
+            _df_info["data"],
+            name=_df_info["name"],
+            targets=target,
+            source=_df_info["source"],
+        )
+        _datasets.append(_dataset)
+    return _datasets
 
 
 @app.function
 def ajustar_familia(
-    familia: str, train: pd.DataFrame, validacion: pd.DataFrame
-) -> optuna.Study:
-    """HPO de una familia. Sólo recibe train y validación; test no entra aquí."""
-    estudio, n_trials = crear_estudio(familia)
+    familia: str, train: pd.DataFrame, validation: pd.DataFrame
+) -> dict:
+    """HPO de una familia. train and log"""
+    # TODO: Handle HPO flag
+    # ***
+    study, n_trials, sampler = crear_estudio(familia)
+    dataset_train, dataset_validation = mlflow_data(
+        [
+            {
+                "data": train,
+                "name": "train",
+                "source": str(RUTA_DATOS),
+            },
+            {
+                "data": validation,
+                "name": "validation",
+                "source": str(RUTA_DATOS),
+            },
+        ]
+    )
 
+    # create fun to optimize
     def objective(trial: optuna.Trial) -> float:
         parametros = proponer_parametros(trial, familia)
         pipeline = construir_pipeline(familia, parametros)
-        inicio = perf_counter()
-        pipeline.fit(train[FEATURES], train[TARGET])
-        trial.set_user_attr("tiempo_fit_s", perf_counter() - inicio)
-        pred = pipeline.predict(validacion[FEATURES])
-        trial.set_user_attr("r2_validacion", r2_score(validacion[TARGET], pred))
-        return root_mean_squared_error(validacion[TARGET], pred)
 
-    estudio.optimize(objective, n_trials=n_trials)
-    return estudio
+        metrics = fit_evaluate(pipeline, train, validation)
+
+        with mlflow.start_run(
+            run_name=f"trial-{trial.number:03d}", nested=True
+        ) as parent:
+            mlflow.log_params(pipeline.named_steps["model"].get_params())
+            mlflow.log_metrics(metrics)
+            mlflow.set_tags(
+                {
+                    "project": "TEE",
+                    "course": "proyecto-ciencia-datos",
+                    "term": "otono-2026",
+                    "role": "tuning-trial",
+                    "family": familia,
+                }
+            )
+
+        return metrics["rmsle"]
+
+    # main study
+    with mlflow.start_run(run_name=f"tuning-{familia}") as parent:
+        mlflow.log_input(dataset_train, context="training")
+        mlflow.log_input(dataset_validation, context="validation")
+        mlflow.log_params({"sampler": sampler, "n_trials": n_trials})
+        mlflow.set_tags(
+            {
+                "project": "TEE",
+                "course": "proyecto-ciencia-datos",
+                "term": "otono-2026",
+                "role": "tuning-study",
+                "family": familia,
+            }
+        )
+
+        study.optimize(objective, n_trials=n_trials)
+
+        # log results
+
+        mlflow.log_params(
+            {f"best_{k}": v for k, v in study.best_params.items()}
+        )
+        mlflow.log_metric("best_rmsle", study.best_value)
+
+        # return unfitted pipeline with best params
+        final_pipeline = construir_pipeline(familia, study.best_params)
+
+    return {
+        "family": familia,
+        "params": study.best_params,
+        "pipeline": final_pipeline,
+        "n_trials": len(study.trials),
+    }
+
+
+@app.function
+def run_best_model(
+    # This is kinda redundant and more useful to notebook 5
+    model_spec: dict,
+    dev_data: pd.DataFrame,
+    test: pd.DataFrame,
+    model_eval: dict,
+):
+    """The pipeline is trained once with the complete of training data (train + val) and logged as a single run in mlflow"""
+
+    pipeline = model_spec["pipeline"]
+
+    df_head = test.head(5)
+    signature = infer_signature(df_head, pipeline.predict(df_head))
+
+    dataset_dev, dataset_test = mlflow_data(
+        [
+            {
+                "data": dev_data,
+                "name": "development",
+                "source": str(RUTA_DATOS),
+            },
+            {
+                "data": test,
+                "name": "test",
+                "source": str(RUTA_DATOS),
+            },
+        ]
+    )
+
+    with mlflow.start_run(
+        run_name=f"{model_spec['family']}-final"
+    ) as final:
+        mlflow.log_input(dataset_dev)
+        mlflow.log_input(dataset_test)
+        mlflow.log_params(model_spec["params"])
+
+        mlflow.log_metrics(model_eval)
+        mlflow.set_tags(
+            {
+                "project": "TEE",
+                "course": "proyecto-ciencia-datos",
+                "term": "otono-2026",
+                "role": "evaluation-run",
+                "family": model_spec["family"],
+            }
+        )
+
+        # TODO: do this framework agnostic
+    # mlflow.sklearn.log_model(
+    #     pipeline,
+    #     name="model",
+    #     input_example=df_head,
+    #     signature=signature,
+    #     serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_PICKLE
+    # )
+
+
+@app.function
+def run_experiment(
+    familia: str,
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    test: pd.DataFrame,
+):
+    dev_data = pd.concat([train, validation]).reset_index(drop=True)
+    config_mlflow()
+    best_model_spec = ajustar_familia(familia, train, validation)
+    best_model_test_results = fit_evaluate(
+        best_model_spec["pipeline"], dev_data, test
+    )
+    run_best_model(
+        best_model_spec, dev_data, test, best_model_test_results
+    )
+
+    return best_model_spec | best_model_test_results
 
 
 @app.cell(hide_code=True)
 def _():
     mo.md(rf"""
-    ## 8. Búsqueda de hiperparámetros
+    ## 8. Búsqueda de hiperparámetros y experiment tracking
 
     `HACER_TUNING = {HACER_TUNING}`. Con `True` se ejecutan los tres estudios y se guardan los
     mejores parámetros (con su RMSLE y $R^2$ de validación) en
@@ -668,61 +957,48 @@ def _():
 
 
 @app.cell
-def _(train, validacion):
+def _(desarrollo, test, validation):
     estudios = {}
     if HACER_TUNING:
         for _familia in FAMILIAS:
             _inicio = perf_counter()
-            estudios[_familia] = ajustar_familia(_familia, train, validacion)
+            estudios[_familia] = run_experiment(
+                _familia, desarrollo, validation, test
+            )
             print(
-                f"[{_familia}] {len(estudios[_familia].trials)} trials, "
-                f"mejor RMSLE validación = {estudios[_familia].best_value:.4f}, "
+                f"[{_familia}] {estudios[_familia]['n_trials']} trials, "
+                f"mejor RMSLE validación = {estudios[_familia]['rmsle']:.4f}, "
+                f"mejor r2 validación = {estudios[_familia]['r2']:.4f}, "
                 f"tiempo = {perf_counter() - _inicio:.0f} s"
             )
-        _mejores = {
-            _f: {
-                "params": _e.best_trial.params,
-                "best_trial": _e.best_trial.number,
-                "rmsle_validacion": _e.best_value,
-                "r2_validacion": _e.best_trial.user_attrs["r2_validacion"],
-                "n_trials": len(_e.trials),
-            }
-            for _f, _e in estudios.items()
-        }
-        RUTA_PARAMETROS.parent.mkdir(parents=True, exist_ok=True)
-        RUTA_PARAMETROS.write_text(json.dumps(_mejores, indent=2), encoding="utf-8")
-    resumen_hpo = json.loads(RUTA_PARAMETROS.read_text(encoding="utf-8"))
-    return estudios, resumen_hpo
+        # _mejores = {
+        #    _f: {
+        #        "params": _e.best_trial.params,
+        #        "best_trial": _e.best_trial.number,
+        #        "rmsle_validacion": _e.best_value,
+        #        "r2_validacion": _e.best_trial.user_attrs["r2_validacion"],
+        #        "n_trials": len(_e.trials),
+        #    }
+        #    for _f, _e in estudios.items()
+        # }
+        # RUTA_PARAMETROS.parent.mkdir(parents=True, exist_ok=True)
+        # RUTA_PARAMETROS.write_text(
+        #    json.dumps(_mejores, indent=2), encoding="utf-8"
+        # )
+    # resumen_hpo = json.loads(RUTA_PARAMETROS.read_text(encoding="utf-8"))
+    return (estudios,)
 
 
 @app.cell
 def _(estudios):
-    _tablas = []
-    for _familia, _estudio in estudios.items():
-        _t = _estudio.trials_dataframe(attrs=("number", "value", "params", "user_attrs"))
-        _t.insert(0, "familia", _familia)
-        _tablas.append(_t.rename(columns={"value": "rmsle_validacion"}))
-    trials = pd.concat(_tablas, ignore_index=True) if _tablas else pd.DataFrame()
-    trials
-    return
+    _estudios = deepcopy(estudios)
+    list(
+        map(lambda d: d.pop("pipeline"), _estudios.values())
+    )  # quitar el pipeline de sklearn de la tabla
 
-
-@app.cell
-def _(resumen_hpo):
-    tabla_hpo = pd.DataFrame(
-        [
-            {
-                "familia": _f,
-                "n_trials": _r["n_trials"],
-                "mejor_trial": _r["best_trial"],
-                "rmsle_validacion": _r["rmsle_validacion"],
-                "r2_validacion": _r.get("r2_validacion"),
-                "mejores_parametros": _r["params"],
-            }
-            for _f, _r in resumen_hpo.items()
-        ]
+    pd.DataFrame(
+        {k: v for k, v in _estudios.items()},
     )
-    tabla_hpo
     return
 
 
@@ -734,81 +1010,6 @@ def _():
     Para cada familia: se reconstruye el `Pipeline` con sus mejores parámetros, se entrena con
     **train + validación** y se evalúa **una vez** en test. El resultado de test no regresa a la
     búsqueda. Las métricas finales se guardan en `artifacts/03-resultados-test.json`.
-    """)
-    return
-
-
-@app.cell
-def _(desarrollo, resumen_hpo, test):
-    _filas = []
-    modelos_finales = {}
-    for _familia in FAMILIAS:
-        _params = completar_parametros(_familia, resumen_hpo[_familia]["params"])
-        _pipeline = construir_pipeline(_familia, _params)
-        _inicio = perf_counter()
-        _pipeline.fit(desarrollo[FEATURES], desarrollo[TARGET])
-        _tiempo = perf_counter() - _inicio
-        _pred = _pipeline.predict(test[FEATURES])
-        modelos_finales[_familia] = _pipeline
-        _filas.append(
-            {
-                "familia": _familia,
-                "rmsle_validacion": resumen_hpo[_familia]["rmsle_validacion"],
-                "r2_validacion": resumen_hpo[_familia].get("r2_validacion"),
-                **{f"{_k}_test": _v for _k, _v in evaluar(test[TARGET], _pred).items()},
-                "tiempo_fit_s": _tiempo,
-            }
-        )
-    resultados = (
-        pd.DataFrame(_filas).sort_values("rmsle_validacion").reset_index(drop=True)
-    )
-    RUTA_RESULTADOS.parent.mkdir(parents=True, exist_ok=True)
-    RUTA_RESULTADOS.write_text(
-        resultados.to_json(orient="records", indent=2), encoding="utf-8"
-    )
-    resultados
-    return (resultados,)
-
-
-@app.cell
-def _(baselines, resultados):
-    _base = baselines.query("particion == 'test'").rename(
-        columns={
-            "baseline": "familia",
-            "rmsle": "rmsle_test",
-            "r2": "r2_test",
-            "mae_log": "mae_log_test",
-            "spearman": "spearman_test",
-        }
-    )
-    _metricas = ["familia", "rmsle_test", "r2_test", "mae_log_test", "spearman_test"]
-    comparacion = pd.concat(
-        [resultados[_metricas + ["tiempo_fit_s"]], _base[_metricas]],
-        ignore_index=True,
-    ).sort_values("rmsle_test")
-    comparacion
-    return
-
-
-@app.cell
-def _(baselines, resultados):
-    _mejor = resultados.iloc[0]
-    _base_cat = baselines.query(
-        "particion == 'test' and baseline == 'mediana_por_poi_category'"
-    )["rmsle"].iloc[0]
-
-    mo.md(f"""
-    ## 10. Selección
-
-    El criterio de selección es el **RMSLE de validación** (el mismo que optimizó cada estudio);
-    el test sólo confirma el desempeño esperado sobre datos no vistos.
-
-    - Modelo seleccionado: **`{_mejor["familia"]}`**.
-    - RMSLE validación: **{_mejor["rmsle_validacion"]:.4f}**; RMSLE test: **{_mejor["rmsle_test"]:.4f}**.
-    - $R^2$ test: **{_mejor["r2_test"]:.3f}**; Spearman test: **{_mejor["spearman_test"]:.3f}**.
-    - Tiempo de entrenamiento final: {_mejor["tiempo_fit_s"]:.1f} s.
-    - Mejor baseline (mediana por `poi_category`) en test: {_base_cat:.4f}
-      → mejora relativa de **{(1 - _mejor["rmsle_test"] / _base_cat):.1%}**.
     """)
     return
 
