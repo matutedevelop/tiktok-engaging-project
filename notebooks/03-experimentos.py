@@ -10,6 +10,7 @@ with app.setup:
     from time import perf_counter
     import os
     from dotenv import load_dotenv
+    from copy import deepcopy
 
     import marimo as mo
     import numpy as np
@@ -411,7 +412,7 @@ def _(test, train, validation):
 
     baselines = pd.DataFrame(_filas)
     baselines
-    return (baselines,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -848,7 +849,9 @@ def ajustar_familia(
 
         # log results
 
-        mlflow.log_params({f"best_{k}": v for k, v in study.best_params})
+        mlflow.log_params(
+            {f"best_{k}": v for k, v in study.best_params.items()}
+        )
         mlflow.log_metric("best_rmsle", study.best_value)
 
         # return unfitted pipeline with best params
@@ -858,12 +861,12 @@ def ajustar_familia(
         "family": familia,
         "params": study.best_params,
         "pipeline": final_pipeline,
-        "n_trials": study.trials,
+        "n_trials": len(study.trials),
     }
 
 
 @app.function
-def log_best_model(
+def run_best_model(
     # This is kinda redundant and more useful to notebook 5
     model_spec: dict,
     dev_data: pd.DataFrame,
@@ -899,7 +902,7 @@ def log_best_model(
         mlflow.log_input(dataset_test)
         mlflow.log_params(model_spec["params"])
 
-        mlflow.log_metrics({model_eval})
+        mlflow.log_metrics(model_eval)
         mlflow.set_tags(
             {
                 "project": "TEE",
@@ -930,11 +933,14 @@ def run_experiment(
     dev_data = pd.concat([train, validation]).reset_index(drop=True)
     config_mlflow()
     best_model_spec = ajustar_familia(familia, train, validation)
-    model_test_results = fit_evaluate(
+    best_model_test_results = fit_evaluate(
         best_model_spec["pipeline"], dev_data, test
     )
-    log_best_model(best_model_spec, dev_data, test)
-    return best_model_spec | model_test_results
+    run_best_model(
+        best_model_spec, dev_data, test, best_model_test_results
+    )
+
+    return best_model_spec | best_model_test_results
 
 
 @app.cell(hide_code=True)
@@ -960,7 +966,7 @@ def _(desarrollo, test, validation):
                 _familia, desarrollo, validation, test
             )
             print(
-                f"[{_familia}] {len(estudios[_familia]['n_trials'])} trials, "
+                f"[{_familia}] {estudios[_familia]['n_trials']} trials, "
                 f"mejor RMSLE validación = {estudios[_familia]['rmsle']:.4f}, "
                 f"mejor r2 validación = {estudios[_familia]['r2']:.4f}, "
                 f"tiempo = {perf_counter() - _inicio:.0f} s"
@@ -980,26 +986,19 @@ def _(desarrollo, test, validation):
         #    json.dumps(_mejores, indent=2), encoding="utf-8"
         # )
     # resumen_hpo = json.loads(RUTA_PARAMETROS.read_text(encoding="utf-8"))
-    return
+    return (estudios,)
 
 
 @app.cell
-def _(resumen_hpo):
-    if False:
-        tabla_hpo = pd.DataFrame(
-            [
-                {
-                    "familia": _f,
-                    "n_trials": _r["n_trials"],
-                    "mejor_trial": _r["best_trial"],
-                    "rmsle_validacion": _r["rmsle_validacion"],
-                    "r2_validacion": _r.get("r2_validacion"),
-                    "mejores_parametros": _r["params"],
-                }
-                for _f, _r in resumen_hpo.items()
-            ]
-        )
-        tabla_hpo
+def _(estudios):
+    _estudios = deepcopy(estudios)
+    list(
+        map(lambda d: d.pop("pipeline"), _estudios.values())
+    )  # quitar el pipeline de sklearn de la tabla
+
+    pd.DataFrame(
+        {k: v for k, v in _estudios.items()},
+    )
     return
 
 
@@ -1012,103 +1011,6 @@ def _():
     **train + validación** y se evalúa **una vez** en test. El resultado de test no regresa a la
     búsqueda. Las métricas finales se guardan en `artifacts/03-resultados-test.json`.
     """)
-    return
-
-
-@app.cell
-def _(desarrollo, resumen_hpo, test):
-    if False:
-        _filas = []
-        modelos_finales = {}
-        for _familia in FAMILIAS:
-            _params = completar_parametros(
-                _familia, resumen_hpo[_familia]["params"]
-            )
-            _pipeline = construir_pipeline(_familia, _params)
-            _inicio = perf_counter()
-            _pipeline.fit(desarrollo[FEATURES], desarrollo[TARGET])
-            _tiempo = perf_counter() - _inicio
-            _pred = _pipeline.predict(test[FEATURES])
-            modelos_finales[_familia] = _pipeline
-            _filas.append(
-                {
-                    "familia": _familia,
-                    "rmsle_validacion": resumen_hpo[_familia][
-                        "rmsle_validacion"
-                    ],
-                    "r2_validacion": resumen_hpo[_familia].get(
-                        "r2_validacion"
-                    ),
-                    **{
-                        f"{_k}_test": _v
-                        for _k, _v in evaluate_num_pred(
-                            test[TARGET], _pred
-                        ).items()
-                    },
-                    "tiempo_fit_s": _tiempo,
-                }
-            )
-        resultados = (
-            pd.DataFrame(_filas)
-            .sort_values("rmsle_validacion")
-            .reset_index(drop=True)
-        )
-        RUTA_RESULTADOS.parent.mkdir(parents=True, exist_ok=True)
-        RUTA_RESULTADOS.write_text(
-            resultados.to_json(orient="records", indent=2), encoding="utf-8"
-        )
-        resultados
-    return (resultados,)
-
-
-@app.cell
-def _(baselines, resultados):
-    if False:
-        _base = baselines.query("particion == 'test'").rename(
-            columns={
-                "baseline": "familia",
-                "rmsle": "rmsle_test",
-                "r2": "r2_test",
-                "mae_log": "mae_log_test",
-                "spearman": "spearman_test",
-            }
-        )
-        _metricas = [
-            "familia",
-            "rmsle_test",
-            "r2_test",
-            "mae_log_test",
-            "spearman_test",
-        ]
-        comparacion = pd.concat(
-            [resultados[_metricas + ["tiempo_fit_s"]], _base[_metricas]],
-            ignore_index=True,
-        ).sort_values("rmsle_test")
-        comparacion
-    return
-
-
-@app.cell
-def _(baselines, resultados):
-    if False:
-        _mejor = resultados.iloc[0]
-        _base_cat = baselines.query(
-            "particion == 'test' and baseline == 'mediana_por_poi_category'"
-        )["rmsle"].iloc[0]
-
-        mo.md(f"""
-        ## 10. Selección
-
-        El criterio de selección es el **RMSLE de validación** (el mismo que optimizó cada estudio);
-        el test sólo confirma el desempeño esperado sobre datos no vistos.
-
-        - Modelo seleccionado: **`{_mejor["familia"]}`**.
-        - RMSLE validación: **{_mejor["rmsle_validacion"]:.4f}**; RMSLE test: **{_mejor["rmsle_test"]:.4f}**.
-        - $R^2$ test: **{_mejor["r2_test"]:.3f}**; Spearman test: **{_mejor["spearman_test"]:.3f}**.
-        - Tiempo de entrenamiento final: {_mejor["tiempo_fit_s"]:.1f} s.
-        - Mejor baseline (mediana por `poi_category`) en test: {_base_cat:.4f}
-          → mejora relativa de **{(1 - _mejor["rmsle_test"] / _base_cat):.1%}**.
-        """)
     return
 
 
