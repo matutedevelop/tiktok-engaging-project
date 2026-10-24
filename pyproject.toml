@@ -1,5 +1,5 @@
 [project]
-name = "tiktok-engaging-project"
+name = "tee"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "lightgbm>=4,<5",
     "marimo>=0.24.2",
     "matplotlib>=3.11.2",
+    "mlflow>=3.17.2",
     "numpy>=2.5.3",
     "optuna>=4,<5",
     "pandas>=3.0.5",
@@ -20,6 +21,13 @@ dependencies = [
     "typer>=0.27.3",
     "vegafusion>=2.0.3",
 ]
+
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [
