@@ -1,31 +1,38 @@
 # TEE — TikTok Engage Estimator
 
-*Título provisional.*
-
-Proyecto de ciencia de datos para estimar el número de reproducciones (`play_count`) de un video de TikTok usando únicamente información disponible **antes** de publicarlo.
+Proyecto de ciencia de datos para estimar el número de reproducciones (`play_count`) de un video de TikTok usando únicamente información disponible **antes** de publicarlo. Incluye el modelo, un workflow de entrenamiento con Prefect, el registro en MLflow / Unity Catalog (Databricks), una API en FastAPI y una interfaz en Streamlit.
 
 ## Integrantes
 
 - Owen David Loza Quirarte
-- Juan Pablo Arroyo Godinez
-- Santiago Ayon sanchez
+- Juan Pablo Arroyo Godínez
+- Santiago Ayón Sánchez
 
 ## Problema
 
-Un creador que está por publicar un video no tiene ninguna estimación cuantitativa de cuántas reproducciones alcanzará; solo lo sabe después del hecho. Este proyecto busca responder si el alcance de un TikTok se puede predecir **a priori**, es decir, a partir de decisiones que el creador controla en el momento de publicar: configuración de la publicación (duet, stitch, repost, share, comentarios), música, texto descriptivo y hashtags, punto de interés geográfico, duración y calidad del video.
+Un creador que está por publicar un video no tiene ninguna estimación cuantitativa de cuántas reproducciones alcanzará; solo lo sabe después del hecho. Este proyecto busca responder si el alcance de un TikTok se puede predecir **a priori**, a partir de decisiones que el creador controla en el momento de publicar: configuración de la publicación (duet, stitch, comentarios), música, texto descriptivo y hashtags, punto de interés geográfico, duración y calidad del video.
 
 Deliberadamente **no** se usan como entrada las métricas de engagement posteriores (`digg_count`, `comment_count`, `share_count`, `collect_count`), variables temporales (`create_time`) ni información del autor (`user_id`, avatares, `user_verified`, `user_tt_seller`), por leakage y privacidad.
 
-### Resultado esperado
+## Resultado
 
-Un modelo de regresión sobre una transformación logarítmica de `play_count` que, evaluado con métricas robustas a colas pesadas (RMSLE, MAE en escala log, correlación de Spearman), supere a baselines triviales y permita discriminar el orden de magnitud del alcance de un video. Además, una cuantificación de qué tan predecible es el éxito sin señal social ni temprana, y de qué decisiones controlables tienen efecto medible.
+El modelo `champion` es un **LightGBM** sobre $\log(1 + \text{play\_count})$, entrenado con 270,000 filas y evaluado una sola vez en test:
+
+| Métrica (test) | Valor |
+|---|---:|
+| RMSLE | 2.057 |
+| $R^2$ (escala log) | 0.170 |
+| MAE (escala log) | 1.642 |
+| Spearman | 0.406 |
+
+Las variables a priori explican cerca del 17 % de la varianza (el baseline de la media tiene $R^2 \approx 0$). El error típico es de un factor de ~5 a ~8 en reproducciones, así que la predicción sirve para estimar el **orden de magnitud** del alcance, no la cifra exacta. El análisis completo está en [`informe/informe-final.ipynb`](informe/informe-final.ipynb).
 
 ## Datos
 
-- **Fuente original:** [The-data-company/TikTok-10M](https://huggingface.co/datasets/The-data-company/TikTok-10M) (Hugging Face). ~6.65 M publicaciones de TikTok en formato Parquet con metadatos de la publicación, estadísticas de engagement, punto de interés, música y video. Contenido *trending* con POI en Estados Unidos, primavera 2025.
+- **Fuente original:** [The-data-company/TikTok-10M](https://huggingface.co/datasets/The-data-company/TikTok-10M) (Hugging Face). ~6.65 M publicaciones de TikTok en Parquet con metadatos de la publicación, estadísticas de engagement, punto de interés, música y video. Contenido *trending* con POI en Estados Unidos, primavera 2025.
 - **Diccionario de datos, variables seleccionadas y sesgos:** [`data/README.md`](data/README.md).
 
-Los datos no se versionan en el repositorio; ver instrucciones de descarga más abajo.
+Los datos no se versionan en el repositorio; ver [Ejecución](#ejecución).
 
 ## Estructura del repositorio
 
@@ -43,36 +50,27 @@ Los datos no se versionan en el repositorio; ver instrucciones de descarga más 
 ├── data/
 │   ├── README.md              # diccionario de datos y notas sobre la fuente
 │   ├── raw/                   # datos descargados (ignorado por git)
-│   │   └── sample_data.parquet
-│   ├── interim/               # salida de 02-preparacion-datos (ignorado por git)
-│   └── processed/             # salida del pipeline de preparación (ignorado por git)
+│   └── interim/               # salida de la preparación (ignorado por git)
+├── artifacts/                 # parámetros y resultados generados (ignorado por git)
 ├── notebooks/
 │   ├── 01-eda.py              # análisis exploratorio (marimo)
-│   ├── 02-preparacion.py      # pipeline de preparación con pandas (marimo)
+│   ├── 02-preparacion-datos.py # pipeline de preparación con pandas (marimo)
 │   ├── 01-eda.ipynb           # export a Jupyter del EDA
 │   ├── 02-preparacion-datos.ipynb # export a Jupyter de la preparación
-│   ├── 03-experimentos.py     # baselines, 3 familias, HPO con Optuna y comparación (marimo)
+│   ├── _03_experimentos.py    # baselines, 3 familias, HPO con Optuna y comparación (marimo)
 │   ├── 04-seleccion-registro.py # selección, registro y aliases en MLflow (marimo)
 │   ├── 05-pipeline.py         # flow de Prefect: etapas, ejecución y verificación (marimo)
 │   ├── 06-api.ipynb           # contrato, carga del modelo y pruebas de la API
 │   └── 07-frontend.ipynb      # formulario, llamada HTTP, resultado y errores
 ├── evidencia/                 # capturas enlazadas desde este README
-│   ├── evidencia-01-eda.png
-│   ├── evidencia-02-preparacion-datos.png
-│   ├── api-prediccion-valida.png
-│   ├── api-entrada-invalida.png
-│   ├── frontend-prediccion.png
-│   ├── frontend-solicitud-respuesta.png
-│   ├── frontend-error-validacion.png
-│   └── frontend-error-conexion.png
 ├── informe/
-│   └── informe-final.ipynb    # síntesis del proyecto con enlaces a los notebooks
+│   └── informe-final.ipynb    # síntesis del proyecto
 ├── src/
 │   ├── entrenamiento/         # features, HPO y flow de Prefect
 │   │   ├── configuracion.py   # features, rutas, semilla, experimento y modelo
 │   │   ├── features.py        # preparación sin estado y Pipeline de scikit-learn
 │   │   ├── hpo.py             # espacios de búsqueda y estudios de Optuna
-│   │   └── flujo.py           # tasks y flow tee-entrenamiento
+│   │   └── flujo.py           # tasks, flow tee-entrenamiento y CLI
 │   ├── api/                   # FastAPI
 │   │   ├── esquemas.py        # contrato de entrada y salida (Pydantic)
 │   │   └── main.py            # carga del modelo champion y endpoints
@@ -81,60 +79,192 @@ Los datos no se versionan en el repositorio; ver instrucciones de descarga más 
 │       └── cliente.py         # llamadas HTTP a la API y manejo de errores
 └── docs/
     ├── mapa-sistema-ml.md     # mapa del sistema de ML
-    └── propuesta.md           # documento del proyecto: contexto, objetivos, EDA, siguientes pasos
+    └── propuesta.md           # propuesta inicial del proyecto
 ```
 
-## Estado actual
-
-- [x] Análisis exploratorio (`01-eda.py`): calidad de datos, nulos, duplicados, tipos, distribuciones del target y de las features booleanas, nominales y numéricas, colinealidades.
-- [x] Definición del conjunto de features a priori: 9 booleanas, 16 nominales, 3 numéricas y target `play_count`.
-- [x] Pipeline de preparación (`02-preparacion.py`): selección de columnas, tipificación, imputación de numéricas por media/mediana según asimetría, eliminación de nulos residuales. Factorizado en funciones encadenables con `.pipe()`.
-- [x] Ingeniería de features para variables de alta cardinalidad y texto (`desc`, `challenges`, `music_id`, `poi_id`).
-- [x] Protocolo de evaluación, baselines y modelado.
-- [x] API de predicción (`src/api/`, `06-api.ipynb`): FastAPI que carga el modelo `champion` del Registry una sola vez al iniciar, valida la entrada con Pydantic y devuelve las reproducciones estimadas junto con la versión del modelo.
-- [x] Frontend (`src/frontend/`, `07-frontend.ipynb`): formulario de Streamlit que llama a la API por HTTP, presenta la predicción con su interpretación y maneja errores de conexión y validación.
-
-### Hallazgos principales del EDA
-
-- Si se exige que un registro no tenga ningún nulo queda menos del 1 % de los datos; se imputan solo las numéricas.
-- El target tiene cola muy pesada; se modelará `log(play_count)` o una transformación Box-Cox.
-- Las booleanas están muy desbalanceadas y sus distribuciones de `play_count` son casi idénticas entre clases.
-- `city`/`city_code`, `poi_category`/`poi_tt_type_name_super` y `poi_tt_type_name_tiny`/`poi_tt_type_code` son colineales; se conserva una de cada par. `country_code`, `duet_display` y `stitch_display` son constantes.
-- `duration` y `music_duration` están altamente correlacionadas. Las numéricas no muestran relación aparente con el target.
-
-## API y frontend
-
-El modelo se entrena y registra en un proceso aparte; la API solo lo carga y sirve predicciones, y el frontend es un cliente HTTP de la API. Ninguno de los dos reentrena al atender una solicitud.
+## Arquitectura
 
 ```
-Streamlit (formulario) --POST JSON--> FastAPI (Pydantic) --> Pipeline champion --> reproducciones + versión
+data/raw ──02──> data/interim ──flow de Prefect──> MLflow + Unity Catalog (@champion)
+                                                          │
+                     Streamlit (formulario) ──POST JSON──> FastAPI ──> Pipeline champion ──> reproducciones + versión
 ```
 
-### Modelo servido
+El modelo se entrena y registra en un proceso aparte. La API solo lo carga y sirve predicciones, y el frontend es un cliente HTTP de la API. Ninguno de los dos reentrena al atender una solicitud.
 
-- **Experimento:** `/Shared/pcd-otono-2026-proyecto-tiktok-engaging-estimator`
-- **Modelo registrado:** `workspace.tiktok-engaging-estimator.pcd_otono_2026_tiktok_engaging_estimator`. El equipo registra en un esquema propio de Unity Catalog (`tiktok-engaging-estimator`) en lugar de `default`; la API toma el nombre de `MODELO_REGISTRADO`, así que no depende de esa decisión.
-- **Versión `champion` al verificar:** versión 3 (`lightgbm`, test RMSLE = 2.057). Las versiones 2 (`random_forest`) y 1 (`ridge`) tienen los aliases `challenger` y `candidate`.
+- **Modelo registrado:** `workspace.tiktok-engaging-estimator.pcd_otono_2026_tiktok_engaging_estimator` (esquema propio en Unity Catalog en lugar de `default`).
+- **Aliases al verificar:** versión 3 (`lightgbm`) → `champion`; versión 2 (`random_forest`) → `challenger`; versión 1 (`ridge`) → `candidate`.
 
-### API (`src/api/`)
+## Ejecución
 
-- `esquemas.py`: contrato de entrada y salida. Los campos de entrada son exactamente las 20 columnas crudas que recibe el modelo registrado, con rangos y categorías tomados de `data/interim`; un campo faltante, fuera de rango o desconocido responde **422** sin llamar al modelo.
-- `main.py`: al iniciar resuelve `champion` a una versión concreta y carga esa versión; cada solicitud reutiliza el mismo `Pipeline`.
-- `POST /api/v1/predicciones` devuelve `reproducciones_estimadas` (`expm1` de la salida del modelo), `log_reproducciones`, `modelo`, `alias`, `version` y `familia`.
-- `GET /health` responde 200 con la versión cargada. Si el modelo no pudo cargarse, la API arranca de todos modos y tanto `/health` como las predicciones responden **503**; nunca se devuelve una predicción inventada.
-- Si se reasigna `champion`, hay que reiniciar la API para que cargue la nueva versión.
+Todos los comandos se ejecutan desde la **raíz del repositorio**.
 
-Detalle del contrato, carga del modelo y pruebas en [`notebooks/06-api.ipynb`](notebooks/06-api.ipynb).
+### 0. Requisitos
 
-### Frontend (`src/frontend/`)
+- Python ≥ 3.12
+- [uv](https://docs.astral.sh/uv/)
+- Un workspace de Databricks con token personal (para entrenar, registrar y servir el modelo)
+- ~15 GB libres en disco para el dataset completo y la caché de Hugging Face
 
-- `app.py`: formulario de Streamlit en cuatro pestañas (Video, Configuración, Música, Ubicación) con los mismos límites que la API. Muestra las reproducciones estimadas, el modelo, alias y versión que respondieron, el orden de magnitud y un rango típico según el RMSLE del champion, junto con las limitaciones del modelo.
-- `cliente.py`: llamadas HTTP a la API y traducción de errores. Un 422 se muestra campo por campo, un 503 indica que no hay modelo y una API apagada muestra un error de conexión; en ningún caso de error se muestra un número.
-- No carga el modelo ni usa credenciales de Databricks; solo necesita `API_URL`.
+### 1. Preparar el ambiente
 
-Detalle del formulario, la llamada HTTP y el manejo de errores en [`notebooks/07-frontend.ipynb`](notebooks/07-frontend.ipynb).
+```bash
+git clone https://github.com/matutedevelop/tiktok-engaging-project.git
+cd tiktok-engaging-project
+uv sync --locked
+```
 
-### Evidencia
+Esto crea `.venv/`, instala las dependencias de `pyproject.toml` respetando `uv.lock` e instala `src/` como paquete, lo que permite importar `entrenamiento`, `api` y `frontend` y cargar el modelo desde la API.
+
+### 2. Configurar variables de entorno
+
+```bash
+cp .env.example .env
+```
+
+Llena `.env` (ignorado por git; nunca subas el token):
+
+| Variable | Uso | Quién la usa |
+|---|---|---|
+| `DATABRICKS_HOST` | `https://<workspace>.cloud.databricks.com` | flow, API |
+| `DATABRICKS_TOKEN` | token personal de Databricks | flow, API |
+| `TRACKING_URI` / `REGISTRY_URI` | opcionales; por defecto `databricks` y `databricks-uc` | flow, API |
+| `MLFLOW_CATALOG` / `MLFLOW_SCHEMA` | catálogo y esquema en Unity Catalog (`workspace` / `tiktok-engaging-estimator`) | flow |
+| `MODELO_REGISTRADO` | nombre de tres niveles del modelo, sin `models:/` ni alias | API |
+| `ALIAS_MODELO` | alias que carga la API (`champion`) | API |
+| `RUTA_MODELO_LOCAL` | opcional: MLflow Model local para probar sin Databricks | API |
+| `API_URL` | endpoint que llama el frontend (`http://127.0.0.1:8000/api/v1/predicciones`) | frontend |
+
+### 3. Descargar los datos
+
+Crea `data/raw/get_data.py` con este contenido:
+
+```python
+import gc
+
+import pandas as pd
+from datasets import load_dataset
+
+ds = load_dataset("The-data-company/TikTok-10M")
+ds["train"].to_parquet("data/raw/data.parquet")
+
+del ds
+gc.collect()
+
+df = pd.read_parquet("data/raw/data.parquet")
+sample_df = df.sample(frac=0.2, random_state=69)
+sample_df.to_parquet("data/raw/sample_data.parquet")
+```
+
+Y ejecútalo desde la raíz:
+
+```bash
+uv run python data/raw/get_data.py
+```
+
+Se generan `data/raw/data.parquet` (~9 GB, dataset completo) y `data/raw/sample_data.parquet` (~1.85 GB, muestra del 20 %, ~2 M filas). `datasets` deja además una copia en la caché de Hugging Face (`~/.cache/huggingface`) que se puede borrar al terminar.
+
+### 4. EDA y preparación de datos
+
+```bash
+# Explorar el EDA (opcional)
+uv run marimo edit notebooks/01-eda.py
+
+# Preparar la muestra: escribe data/interim/sample_data.parquet
+uv run python notebooks/02-preparacion-datos.py sample
+```
+
+La preparación selecciona columnas, corrige tipos, imputa y elimina nulos residuales. Su salida en `data/interim/` es la entrada de todos los pasos siguientes.
+
+### 5. Entrenar y registrar el modelo (flow de Prefect)
+
+**Terminal 1**, servidor de Prefect (se queda ocupada; interfaz en <http://127.0.0.1:4200>):
+
+```bash
+uv run prefect server start
+```
+
+**Terminal 2:**
+
+```bash
+uv run prefect config set PREFECT_API_URL="http://127.0.0.1:4200/api"
+
+# Primera corrida: HPO de las tres familias, entrenamiento, evaluación, registro y aliases
+uv run python -m entrenamiento.flujo --hacer-tuning --identificador primera-corrida
+
+# Corridas posteriores: reutiliza los parámetros de artifacts/05-mejores-parametros.json
+uv run python -m entrenamiento.flujo --sin-tuning --identificador sin-hpo
+```
+
+| Opción | Efecto |
+|---|---|
+| `--hacer-tuning` / `--sin-tuning` | ejecuta los estudios de Optuna o reutiliza el JSON de parámetros |
+| `--identificador <texto>` | nombre del flow run (`tee-<identificador>`), también en el tag `prefect_run` de MLflow |
+| `--n-filas <n>` | tamaño de la submuestra (por defecto 300,000) |
+| `--n-trials <n>` | fija el número de trials de todas las familias |
+
+Para una prueba rápida antes de la corrida completa: `--hacer-tuning --n-filas 5000 --n-trials 2`.
+
+El flow termina con tres versiones nuevas del modelo en Unity Catalog y los aliases `champion`, `challenger` y `candidate` asignados por RMSLE de test. Para revisar el resultado desde un notebook:
+
+```bash
+uv run marimo edit notebooks/05-pipeline.py
+```
+
+`notebooks/_03_experimentos.py` y `notebooks/04-seleccion-registro.py` documentan la experimentación y el registro que el flow automatiza; no es necesario correrlos para reproducir el modelo.
+
+### 6. Levantar la API
+
+```bash
+uv run fastapi dev src/api/main.py --port 8000
+```
+
+Al iniciar, el log muestra `Modelo cargado: <modelo>@champion -> version N (<familia>)`.
+
+- Documentación interactiva: <http://127.0.0.1:8000/docs>
+- Disponibilidad: <http://127.0.0.1:8000/health> (200 con la versión cargada, 503 si no hay modelo)
+
+Prueba rápida (en PowerShell usa `curl.exe`):
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/predicciones \
+  -H "Content-Type: application/json" \
+  -d '{"duet_info_duet_from_id": "0.0", "duet_enabled": true, "is_ad": false, "item_mute": false,
+       "stitch_enabled": true, "music_original": true, "music_duration": 44.0, "vq_score": 74.62,
+       "duration": 28, "desc": "Amazon!!!! #amazonfinds #affordablefashion",
+       "challenges": ["amazonfinds", "affordablefashion"], "poi_category": "Place and Address",
+       "item_comment_status": "0", "city_code": "5096337.0", "poi_tt_type_name_medium": "Places",
+       "poi_tt_type_name_tiny": "Province", "music_id": "7.099057143395667e+18",
+       "music_author_name": "So Future", "poi_id": "22535865205217746",
+       "diversification_id": "10029.0"}'
+```
+
+Si se reasigna `champion`, hay que reiniciar la API para que cargue la nueva versión. Detalle del contrato y pruebas en [`notebooks/06-api.ipynb`](notebooks/06-api.ipynb).
+
+### 7. Levantar el frontend
+
+Con la API encendida, en otra terminal:
+
+```bash
+uv run streamlit run src/frontend/app.py --server.port 8501
+```
+
+La interfaz queda en <http://localhost:8501>. Solo necesita `API_URL`; no usa credenciales de Databricks. Detalle en [`notebooks/07-frontend.ipynb`](notebooks/07-frontend.ipynb).
+
+### Problemas frecuentes
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| `Failed to reach API at http://127.0.0.1:4200/api/` | el servidor de Prefect no está encendido | `uv run prefect server start` en otra terminal |
+| el flow falla en `cargar-datos` con `FileNotFoundError` | falta `data/interim/sample_data.parquet` | correr el paso 4 |
+| el flow falla en `configurar-mlflow` | faltan `DATABRICKS_HOST` / `DATABRICKS_TOKEN` o el token venció | revisar `.env` |
+| `parametros-*` falla con `--sin-tuning` | no existe el JSON de parámetros | correr una vez con `--hacer-tuning` |
+| el Registry rechaza el nombre del modelo | catálogo o esquema incorrectos | revisar `MLFLOW_CATALOG` y `MLFLOW_SCHEMA` |
+| la API no encuentra `FrequencyEncoder` al cargar el modelo | el proyecto no está instalado en el ambiente | `uv sync --locked` |
+| `/health` responde 503 | el modelo no se pudo cargar (token, nombre o alias) | revisar `MODELO_REGISTRADO`, `ALIAS_MODELO` y el log de la API |
+| el frontend dice "No fue posible conectarse con la API" | la API está apagada o `API_URL` es incorrecta | levantar la API (paso 6) y revisar `API_URL` |
+
+## Evidencia
 
 | Caso | Captura |
 |---|---|
@@ -145,116 +275,13 @@ Detalle del formulario, la llamada HTTP y el manejo de errores en [`notebooks/07
 | Frontend con error de validación | [`evidencia/frontend-error-validacion.png`](evidencia/frontend-error-validacion.png) |
 | Frontend con la API apagada | [`evidencia/frontend-error-conexion.png`](evidencia/frontend-error-conexion.png) |
 
-## Siguientes pasos
+## Qué no se versiona
 
-1. Feature engineering: longitud y conteo de hashtags en `desc`/`challenges`; frecuencia o target encoding para `music_id`, `poi_id`, `poi_category`; agrupación de colas en `other` para `address`, `city_code`, `poi_tt_type_name_*`, `diversification_id`; bandera `no_vq` para `vq_score == 0`.
-2. Split estratificado por cuantiles del target y baselines triviales (media, mediana, mediana por categoría).
-3. Modelos: regresión lineal regularizada como baseline interpretable, gradient boosting (LightGBM/XGBoost) como modelo principal, y una formulación alternativa como clasificación ordinal por orden de magnitud.
-4. Interpretación con importancia por permutación / SHAP.
+`.venv/`, `.env`, `data/raw/`, `data/interim/`, `artifacts/`, secretos, credenciales y cualquier artefacto generado. Ver `.gitignore`.
 
-## Reproducibilidad
+## Trabajo futuro
 
-### Requisitos
-
-- Python ≥ 3.12
-- [uv](https://docs.astral.sh/uv/)
-
-### Preparar el ambiente
-
-```bash
-git clone <url-del-repo>
-cd <nombre-del-repo>
-uv sync
-```
-
-Esto crea `.venv/` e instala las dependencias declaradas en `pyproject.toml` respetando `uv.lock`.
-
-### Obtener los datos
-
-se debe ejecutar el siguiente codigo dentro de `data/raw/`
-```python
-import gc
-
-import pandas as pd
-from datasets import load_dataset
-
-
-ds = load_dataset("The-data-company/TikTok-10M")
-
-ds["train"].to_parquet("data/raw/data.parquet")
-
-del ds
-gc.collect()
-
-df = pd.read_parquet("data/raw/data.parquet")
-sample_df = df.sample(frac=0.2, random_state=69)
-sample_df.to_parquet("data/raw/sample_data.parquet")
-
-
-```
-
-> Ajusta el tamaño de la muestra según tu memoria disponible. El EDA se realizó sobre ~2 M registros.
-
-### Ejecutar los notebooks
-
-Ambos notebooks son archivos `.py` de [marimo](https://marimo.io/).
-aunque tambien existen sus respectivos exports a jupyter
-
-```bash
-# EDA (modo interactivo)
-uv run marimo edit notebooks/01-eda.py
-
-# Preparación de datos (modo interactivo)
-uv run marimo edit notebooks/02-preparacion.py
-
-# o ejecutar de corrido, sin editor
-uv run marimo run notebooks/01-eda.py
-uv run marimo run notebooks/02-preparacion.py
-```
-
-`02-preparacion.py` lee `data/raw/sample_data.parquet` y, si se descomenta la última celda, escribe `data/processed/data_clean.parquet`.
-
-### Configurar variables de entorno
-
-La API y el frontend leen su configuración de `.env` en la raíz (ignorado por git). Se parte de la plantilla:
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Uso |
-|---|---|
-| `DATABRICKS_HOST`, `DATABRICKS_TOKEN` | acceso a Databricks (solo la API) |
-| `MODELO_REGISTRADO` | nombre de tres niveles del modelo, sin `models:/` ni alias |
-| `ALIAS_MODELO` | alias que carga la API (`champion`) |
-| `RUTA_MODELO_LOCAL` | opcional: MLflow Model local para probar sin Databricks |
-| `API_URL` | endpoint que llama el frontend (`http://127.0.0.1:8000/api/v1/predicciones`) |
-
-### Levantar la API y el frontend
-
-Primero la API y después el frontend, cada uno en su terminal, desde la raíz del repositorio:
-
-```bash
-uv sync --locked
-
-# Terminal 1: API (documentación interactiva en http://127.0.0.1:8000/docs)
-uv run fastapi dev src/api/main.py --port 8000
-
-# Terminal 2: frontend (http://localhost:8501)
-uv run streamlit run src/frontend/app.py --server.port 8501
-```
-
-Al iniciar, el log de la API muestra `Modelo cargado: <modelo>@champion -> version N (<familia>)`, y `http://127.0.0.1:8000/health` debe responder `"modelo_cargado": true`.
-
-### Qué no se versiona
-
-`.venv/`, `data/raw/`, `data/processed/`, secretos, credenciales y cualquier artefacto generado. Ver `.gitignor
-
-estos notebooks son para el EDA y probar una version inicial del pipeline, el resultado no es persistente
-
-
-
-
-
-
-
+1. Entrenar el `champion` con la muestra completa o el dataset entero y ampliar el presupuesto de HPO.
+2. Sustituir TF-IDF + SVD por embeddings de texto para `desc` y `challenges`.
+3. Interpretar el modelo con importancia por permutación o SHAP.
+4. Mover la imputación de `02` dentro del `Pipeline` y desplegar la API fuera de la máquina local.
