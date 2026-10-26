@@ -599,7 +599,8 @@ def construir_pipeline(familia: str, parametros: dict) -> Pipeline:
         [
             ("preprocessing", preprocesamiento),
             ("model", estimadores[familia](**parametros)),
-        ]
+        ],
+        verbose=True,
     )
 
 
@@ -665,6 +666,7 @@ def proponer_parametros(trial: optuna.Trial, familia: str) -> dict:
             ),
             "max_samples": trial.suggest_float("max_samples", 0.3, 1.0),
             "random_state": SEED,
+            "verbose": 2,
             "n_jobs": -1,
         }
     if familia == "lightgbm":
@@ -702,12 +704,16 @@ def completar_parametros(familia: str, mejores: dict) -> dict:
     # ***
     fijos = {
         "ridge": {},
-        "random_forest": {"random_state": SEED, "n_jobs": -1},
+        "random_forest": {
+            "random_state": SEED,
+            "n_jobs": -1,
+            "verbose": 2,
+        },
         "lightgbm": {
             "subsample_freq": 1,
             "random_state": SEED,
             "n_jobs": -1,
-            "verbose": -1,
+            "verbose": 2,
         },
     }
     return {**mejores, **fijos[familia]}

@@ -15,6 +15,7 @@ with app.setup:
         config_mlflow,
         mlflow_data,
         fit_evaluate,
+        completar_parametros,
     )
     from mlflow import MlflowClient
     from mlflow.models import infer_signature
@@ -180,10 +181,11 @@ def _():
 @app.function(hide_code=True)
 def build_best_model(family: str) -> Pipeline:
     run_id = get_best_family_run_id(family)
-    model_params = get_run_model_params(run_id)
-    pipeline = construir_pipeline(family, model_params)
+    hpo_model_params = get_run_model_params(run_id)
+    params = completar_parametros(family, hpo_model_params)
+    pipeline = construir_pipeline(family, params)
 
-    return {"family": family, "pipeline": pipeline, "params": model_params}
+    return {"family": family, "pipeline": pipeline, "params": params}
 
 
 @app.cell(hide_code=True)
@@ -200,7 +202,7 @@ def _():
 
 @app.cell
 def _():
-    df = pd.read_parquet(RUTA_DATOS_COMPLETE)
+    df = pd.read_parquet(RUTA_DATOS_SAMPLE)
     df_prepared = preparar_features(df)
     df_prepared
     return (df_prepared,)
@@ -246,12 +248,12 @@ def log_model(
             {
                 "data": train,
                 "name": "train-prod",
-                "source": str(RUTA_DATOS_COMPLETE),
+                "source": str(RUTA_DATOS_SAMPLE),
             },
             {
                 "data": test,
                 "name": "test-prod",
-                "source": str(RUTA_DATOS_COMPLETE),
+                "source": str(RUTA_DATOS_SAMPLE),
             },
         ]
     )
@@ -284,29 +286,37 @@ def log_model(
             signature=signature,
             serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_PICKLE,
         )
+
+        model_uri = f"models:/{mlflow_model.model_id}"
+
         version = mlflow.register_model(
-            model_uri=f"models:/{mlflow_model.model_id}",
-            name=f"{CATALOG}.{SCHEMA}.{family}-estimator",
+            model_uri=model_uri,
+            name=f"{CATALOG}.{SCHEMA}.estimator",
         )
+        return {"version": version.version, "model_uri": model_uri}
 
 
 @app.function
-def main_flow(family: str, train: pd.DataFrame, test: pd.DataFrame):
+def train_family_flow(
+    family: str, train: pd.DataFrame, test: pd.DataFrame
+):
 
     config_mlflow()
 
     print(f"[INFO]: building {family}")
 
     best_model = build_best_model(family)
+    print(f"[INFO]: builded {family}")
     pipeline = best_model["pipeline"]
     params = best_model["params"]
+    print(f"[INFO]: fitting {family}")
     metrics = fit_evaluate(pipeline, train, test)
 
     print(f"[INFO]: {family}-r2:{metrics['r2']}")
     print(f"[INFO]: {family}-rmsle:{metrics['rmsle']}")
 
     # log model
-    log_model(
+    mlflow_model_meta = log_model(
         family,
         pipeline=pipeline,
         train=train,
@@ -314,6 +324,7 @@ def main_flow(family: str, train: pd.DataFrame, test: pd.DataFrame):
         metrics=metrics,
         params=params,
     )
+    return {"family": family} | metrics | mlflow_model_meta
 
 
 @app.cell(hide_code=True)
@@ -326,8 +337,44 @@ def _():
 
 @app.cell
 def _(test, train):
+    families = []
     for _family in FAMILIAS:
-        main_flow(_family, train, test)
+        family_result = train_family_flow(_family, train, test)
+        families.append(family_result)
+
+    families_comparation = pd.DataFrame(families)
+    families_comparation
+    return (families_comparation,)
+
+
+@app.function
+def rank_aliasing(df: pd.DataFrame):
+
+    client = MlflowClient()
+    df = df.sort_values("rmsle")
+
+    for alias, fila in zip(
+        ["champion", "challenger", "candidate"], df.to_dict("records")
+    ):
+        nombre = f"{CATALOG}.{SCHEMA}.estimator"
+        client.set_registered_model_alias(nombre, alias, fila["version"])
+        client.set_model_version_tag(
+            nombre,
+            fila["version"],
+            "validation_rmsle",
+            f"{fila['rmsle']:.6f}",
+        )
+
+
+@app.cell
+def _(families_comparation):
+    rank_aliasing(families_comparation)
+    return
+
+
+@app.cell
+def _(families_comparation):
+    families_comparation
     return
 
 
