@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1,<2",
     "scikit-learn>=1.5,<2",
     "seaborn>=0.13.2",
+    "streamlit>=1.40,<2",
     "torch>=2.14.1",
     "typer>=0.27.3",
     "uvicorn[standard]>=0.30",
