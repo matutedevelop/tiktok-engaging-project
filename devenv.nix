@@ -28,13 +28,15 @@
 
 
 
-# === === === === === === ===
+  # === === === === === === ===
 
   env.LD_LIBRARY_PATH = lib.makeLibraryPath [
     pkgs.zlib
-  ];
+    pkgs.stdenv.cc.cc.lib
 
-# === === === === === === ===
+  ] + ":/run/opengl-driver/lib";
+
+  # === === === === === === ===
 
 
 
