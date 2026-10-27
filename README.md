@@ -25,6 +25,14 @@ El modelo `champion` es un **LightGBM** sobre $\log(1 + \text{play\_count})$, en
 | MAE (escala log) | 1.642 |
 | Spearman | 0.406 |
 
+Comparación de las tres familias en la misma corrida del flow (mismos datos, particiones y preprocesamiento; ranking por RMSLE de test):
+
+| Familia | Versión | Alias | RMSLE validación | RMSLE test | $R^2$ test | Spearman test |
+|---|---:|---|---:|---:|---:|---:|
+| **LightGBM** | 3 | `champion` | 2.063 | **2.057** | **0.170** | **0.406** |
+| Random Forest | 2 | `challenger` | 2.086 | 2.082 | 0.150 | 0.384 |
+| Ridge | 1 | `candidate` | 2.115 | 2.110 | 0.127 | 0.354 |
+
 Las variables a priori explican cerca del 17 % de la varianza (el baseline de la media tiene $R^2 \approx 0$). El error típico es de un factor de ~5 a ~8 en reproducciones, así que la predicción sirve para estimar el **orden de magnitud** del alcance, no la cifra exacta. El análisis completo está en [`informe/informe-final.ipynb`](informe/informe-final.ipynb).
 
 ## Datos
