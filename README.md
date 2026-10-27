@@ -41,7 +41,6 @@ Los datos no se versionan en el repositorio; ver [Ejecución](#ejecución).
 ├── README.md                  # este archivo
 ├── pyproject.toml             # dependencias del proyecto
 ├── uv.lock                    # lockfile de uv
-├── custom.css                 # estilos para los notebooks de marimo
 ├── .env.example               # nombres de las variables de entorno, sin valores reales
 ├── .gitignore                 # ignora .env, .venv, datos y artefactos
 ├── .python-version            # 3.12
@@ -52,16 +51,16 @@ Los datos no se versionan en el repositorio; ver [Ejecución](#ejecución).
 │   ├── raw/                   # datos descargados (ignorado por git)
 │   └── interim/               # salida de la preparación (ignorado por git)
 ├── artifacts/                 # parámetros y resultados generados (ignorado por git)
-├── notebooks/
-│   ├── 01-eda.py              # análisis exploratorio (marimo)
-│   ├── 02-preparacion-datos.py # pipeline de preparación con pandas (marimo)
-│   ├── 01-eda.ipynb           # export a Jupyter del EDA
-│   ├── 02-preparacion-datos.ipynb # export a Jupyter de la preparación
-│   ├── _03_experimentos.py    # baselines, 3 familias, HPO con Optuna y comparación (marimo)
-│   ├── 04-seleccion-registro.py # selección, registro y aliases en MLflow (marimo)
-│   ├── 05-pipeline.py         # flow de Prefect: etapas, ejecución y verificación (marimo)
-│   ├── 06-api.ipynb           # contrato, carga del modelo y pruebas de la API
-│   └── 07-frontend.ipynb      # formulario, llamada HTTP, resultado y errores
+├── notebooks/                 # cada notebook es un .py de marimo con su export .ipynb
+│   ├── custom.css             # estilos para los notebooks de marimo
+│   ├── 01-eda                 # análisis exploratorio
+│   ├── 02-preparacion-datos   # pipeline de preparación con pandas
+│   ├── 03-experimentos        # baselines, 3 familias, HPO con Optuna y comparación
+│   ├── _03_experimentos.py    # copia importable de 03 (marimo no importa nombres con guion)
+│   ├── 04-seleccion-registro  # criterio de selección, registro, versiones y aliases
+│   ├── 05-pipeline            # flow de Prefect: etapas, ejecución y verificación
+│   ├── 06-api                 # contrato, carga del modelo y pruebas de la API
+│   └── 07-frontend            # formulario, llamada HTTP, resultado y errores
 ├── evidencia/                 # capturas enlazadas desde este README
 ├── informe/
 │   └── informe-final.ipynb    # síntesis del proyecto
@@ -74,12 +73,12 @@ Los datos no se versionan en el repositorio; ver [Ejecución](#ejecución).
 │   ├── api/                   # FastAPI
 │   │   ├── esquemas.py        # contrato de entrada y salida (Pydantic)
 │   │   └── main.py            # carga del modelo champion y endpoints
-│   └── frontend/              # Streamlit
-│       ├── app.py             # formulario y presentación del resultado
-│       └── cliente.py         # llamadas HTTP a la API y manejo de errores
+│   ├── frontend/              # Streamlit
+│   │   ├── app.py             # formulario y presentación del resultado
+│   │   └── cliente.py         # llamadas HTTP a la API y manejo de errores
+│   └── data_pipelines/        # utilidades de preparación (todavía no las usa el flow)
 └── docs/
-    ├── mapa-sistema-ml.md     # mapa del sistema de ML
-    └── propuesta.md           # propuesta inicial del proyecto
+    └── mapa-sistema-ml.md     # mapa del sistema de ML
 ```
 
 ## Arquitectura
@@ -92,8 +91,20 @@ data/raw ──02──> data/interim ──flow de Prefect──> MLflow + Unit
 
 El modelo se entrena y registra en un proceso aparte. La API solo lo carga y sirve predicciones, y el frontend es un cliente HTTP de la API. Ninguno de los dos reentrena al atender una solicitud.
 
-- **Modelo registrado:** `workspace.tiktok-engaging-estimator.pcd_otono_2026_tiktok_engaging_estimator` (esquema propio en Unity Catalog en lugar de `default`).
-- **Aliases al verificar:** versión 3 (`lightgbm`) → `champion`; versión 2 (`random_forest`) → `challenger`; versión 1 (`ridge`) → `candidate`.
+### Tracking y Registry en Databricks
+
+| Concepto | Valor |
+|---|---|
+| Tracking URI / Registry URI | `databricks` / `databricks-uc` |
+| Experimento de MLflow (Workspace) | `/Shared/pcd-otono-2026-proyecto-tiktok-engaging-estimator` |
+| Runs por familia | parent `hpo-<familia>` (`hpo-ridge`, `hpo-random-forest`, `hpo-lightgbm`) con child runs `trial-NNN` y `<familia>-final` |
+| Modelo registrado (Unity Catalog) | `workspace.tiktok-engaging-estimator.pcd_otono_2026_tiktok_engaging_estimator` (esquema propio en lugar de `default`) |
+| Versión seleccionada | **versión 3 (`lightgbm`) con alias `champion`** |
+| Otras versiones | versión 2 (`random_forest`) → `challenger`; versión 1 (`ridge`) → `candidate` |
+
+Todas las familias y corridas usan el mismo experimento. Cada versión del modelo lleva los tags `family`, `final_run_id`, `hpo_run_id`, `test_rmsle`, `test_r2` y `prefect_run`, que la relacionan con su run de procedencia y con la corrida de Prefect que la creó. Los aliases se asignan por RMSLE de test en cada corrida del flow; no se fija de antemano qué familia gana.
+
+La ejecución remota la hizo una sola persona del equipo, con su cuenta de Databricks y su `.env` local; el resto del equipo colaboró en código, análisis, API, interfaz y documentación (detalle en la descripción del PR).
 
 ## Ejecución
 
@@ -251,6 +262,17 @@ uv run streamlit run src/frontend/app.py --server.port 8501
 
 La interfaz queda en <http://localhost:8501>. Solo necesita `API_URL`; no usa credenciales de Databricks. Detalle en [`notebooks/07-frontend.ipynb`](notebooks/07-frontend.ipynb).
 
+### 8. Repetir la comprobación
+
+Después de correr el flow (paso 5) y con API y frontend encendidos (pasos 6 y 7):
+
+1. **Prefect** (<http://127.0.0.1:4200>, *Runs*): el flow run `tee-<identificador>` termina en `Completed` y sus 19 task runs también (`configurar-mlflow`, `cargar-datos`, `validar-datos`, `preparar-features`, `dividir-datos`, `parametros-*`, `entrenar-*`, `evaluar-*`, `registrar-*`, `asignar-aliases`, `verificar-champion`).
+2. **MLflow en Databricks** (*Experiments* → `/Shared/pcd-otono-2026-proyecto-tiktok-engaging-estimator`): un parent `hpo-<familia>` por familia con sus `trial-NNN` (hiperparámetros y `tuning_rmsle`) y un `<familia>-final` con parámetros, métricas `test_*` y el modelo. Con `--sin-tuning` sólo aparecen runs `*-final` nuevos, sin estudios de HPO.
+3. **Unity Catalog** (*Catalog* → `workspace` → esquema → modelo): una versión nueva por familia y los aliases `champion`, `challenger` y `candidate`; los tags de cada versión indican su familia y run.
+4. **Notebook** `uv run marimo edit notebooks/05-pipeline.py`: consulta la última corrida en Prefect, el ranking en MLflow, las versiones registradas y carga `@champion` para predecir.
+5. **API:** `GET /health` devuelve la misma versión que tiene `champion`; la solicitud de ejemplo del paso 6 responde con una predicción y esa versión, y una entrada inválida responde 422 sin predicción.
+6. **Frontend:** el formulario muestra la predicción y la versión que devolvió la API; con la API apagada muestra un error de conexión comprensible.
+
 ### Problemas frecuentes
 
 | Síntoma | Causa probable | Solución |
@@ -266,14 +288,23 @@ La interfaz queda en <http://localhost:8501>. Solo necesita `API_URL`; no usa cr
 
 ## Evidencia
 
-| Caso | Captura |
-|---|---|
-| API con entrada válida (predicción y versión) | [`evidencia/api-prediccion-valida.png`](evidencia/api-prediccion-valida.png) |
-| API con entrada inválida (422) | [`evidencia/api-entrada-invalida.png`](evidencia/api-entrada-invalida.png) |
-| Frontend con predicción | [`evidencia/frontend-prediccion.png`](evidencia/frontend-prediccion.png) |
-| Solicitud y respuesta de la API para esa predicción | [`evidencia/frontend-solicitud-respuesta.png`](evidencia/frontend-solicitud-respuesta.png) |
-| Frontend con error de validación | [`evidencia/frontend-error-validacion.png`](evidencia/frontend-error-validacion.png) |
-| Frontend con la API apagada | [`evidencia/frontend-error-conexion.png`](evidencia/frontend-error-conexion.png) |
+En las capturas remotas se ocultaron correo, avatar, URL del workspace e identificadores personales.
+
+| Caso | Qué muestra | Captura |
+|---|---|---|
+| Experimento remoto | ruta `/Shared/pcd-otono-2026-proyecto-tiktok-engaging-estimator` con `hpo-ridge`, `hpo-random-forest` y `hpo-lightgbm` | [`evidencia/experimento-remoto.png`](evidencia/experimento-remoto.png) |
+| HPO de Ridge | trials de `hpo-ridge` con `alpha`, `tuning_rmsle` y mejor resultado | [`evidencia/hpo-ridge.png`](evidencia/hpo-ridge.png) |
+| HPO de Random Forest | trials de `hpo-random-forest` con hiperparámetros, `tuning_rmsle` y mejor resultado | [`evidencia/hpo-random-forest.png`](evidencia/hpo-random-forest.png) |
+| HPO de LightGBM | trials de `hpo-lightgbm` con hiperparámetros, `tuning_rmsle` y mejor resultado | [`evidencia/hpo-lightgbm.png`](evidencia/hpo-lightgbm.png) |
+| Comparación final | modelos de los tres runs `*-final` del flow con sus métricas de test (`test_mae_log`, `test_r2`); los mejores parámetros de cada familia están en las capturas de HPO | [`evidencia/comparacion-final.png`](evidencia/comparacion-final.png) |
+| Model Registry | nombre completo, tres versiones con familia y run, alias `champion` | [`evidencia/model-registry.png`](evidencia/model-registry.png) |
+| Prefect | flow run `tee-primera-corrida` en `Completed` con sus 19 task runs | [`evidencia/prefect.png`](evidencia/prefect.png) |
+| API: entrada válida | solicitud, respuesta con predicción y versión del modelo | [`evidencia/api-prediccion-valida.png`](evidencia/api-prediccion-valida.png) |
+| API: entrada inválida | solicitud y respuesta 422 de validación, sin predicción | [`evidencia/api-entrada-invalida.png`](evidencia/api-entrada-invalida.png) |
+| Frontend integrado | formulario con los valores usados y predicción obtenida de la API | [`evidencia/frontend-prediccion.png`](evidencia/frontend-prediccion.png) |
+| Frontend integrado | solicitud y respuesta de la API para esa misma predicción | [`evidencia/frontend-solicitud-respuesta.png`](evidencia/frontend-solicitud-respuesta.png) |
+| Frontend: error de validación | mensaje comprensible ante una entrada inválida | [`evidencia/frontend-error-validacion.png`](evidencia/frontend-error-validacion.png) |
+| Frontend: error de conexión | mensaje comprensible con la API apagada | [`evidencia/frontend-error-conexion.png`](evidencia/frontend-error-conexion.png) |
 
 ## Qué no se versiona
 
