@@ -1025,11 +1025,8 @@ def _():
     mo.md(r"""
     ### Interpretación
 
-    > **Pendiente de redactar con los resultados de la corrida:** comparar las tres familias
-    > (diferencia de RMSLE en factor multiplicativo de reproducciones, $R^2$, Spearman y tiempo),
-    > justificar si la mejora del modelo seleccionado compensa su costo frente al segundo lugar,
-    > y señalar dos limitaciones (submuestra de 300k filas, presupuesto pequeño de trials,
-    > texto reducido a 80 componentes LSA, imputación de `02` con toda la muestra).
+    Ver la interpretación completa en `03-experimentos`; esta copia sólo existe para poder
+    importar sus funciones desde otros notebooks.
     """)
     return
 

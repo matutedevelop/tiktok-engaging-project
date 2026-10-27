@@ -1019,11 +1019,51 @@ def _():
     mo.md(r"""
     ### Interpretación
 
-    > **Pendiente de redactar con los resultados de la corrida:** comparar las tres familias
-    > (diferencia de RMSLE en factor multiplicativo de reproducciones, $R^2$, Spearman y tiempo),
-    > justificar si la mejora del modelo seleccionado compensa su costo frente al segundo lugar,
-    > y señalar dos limitaciones (submuestra de 300k filas, presupuesto pequeño de trials,
-    > texto reducido a 80 componentes LSA, imputación de `02` con toda la muestra).
+    Resultados de la última corrida completa registrada en Databricks (experimento
+    `/Shared/pcd/otono-2026-proyecto/tiktok-engaging-estimator`, 300,000 filas). "RMSLE de la
+    búsqueda" es el mejor valor de la función objetivo; las métricas de test son de los runs
+    `<familia>-final`:
+
+    | Familia | Mejores parámetros | RMSLE de la búsqueda | RMSLE test | $R^2$ test | MAE log test | Spearman test | Fit final (s) |
+    |---|---|---:|---:|---:|---:|---:|---:|
+    | Ridge | `alpha` 10,000 | 1.681 | 2.126 | 0.114 | 1.705 | 0.349 | 19 |
+    | **Random Forest** | 100 árboles, `max_depth` 24, `min_samples_leaf` 2, `max_features` 0.5, `max_samples` 0.95 | 1.524 | **2.098** | **0.137** | **1.680** | **0.366** | 969 |
+    | LightGBM | 1000 árboles, `learning_rate` 0.158, `num_leaves` 255, `min_child_samples` 121, `subsample` 0.93, `colsample_bytree` 0.87 | 0.762 | 2.137 | 0.105 | 1.690 | 0.349 | 78 |
+
+    - **Las tres familias superan al baseline, pero por poco.** Con $R^2$ de test entre 0.10 y 0.14
+      (la media de train tiene $R^2 \approx 0$), las variables a priori explican una parte pequeña de
+      la variación de las reproducciones. Un RMSLE de ~2.1 equivale a equivocarse por un factor de
+      $e^{2.1} \approx 8$; el modelo sirve para el orden de magnitud, no para la cifra exacta.
+    - **En esta corrida Random Forest es el mejor en test**, pero la ventaja es mínima: 0.028 de RMSLE
+      frente a Ridge (un error ~3 % menor en factor multiplicativo) y 0.017 de Spearman, a cambio de
+      un entrenamiento 50 veces más lento (969 s contra 19 s). Con esta diferencia, la mejora no
+      compensa el costo frente al segundo lugar.
+    - **La métrica de la búsqueda no anticipa el test.** El RMSLE de la búsqueda (0.76–1.68) es mucho
+      menor que el de test (2.10–2.14), y en los trials de LightGBM el $R^2$ llegó a 0.89, cuando en
+      test es 0.10. La celda de la sección 8 llama `run_experiment(_familia, desarrollo, validation,
+      test)`: el primer argumento es `desarrollo` (train + validación) y no `train`, así que las filas
+      de validación también se usaron para entrenar cada trial y la función objetivo midió, en parte,
+      error dentro de la muestra. El test no se tocó, por lo que sus métricas sí son válidas.
+    - **Consecuencia sobre los hiperparámetros elegidos.** Como la búsqueda premiaba memorizar, Optuna
+      eligió las configuraciones más flexibles: LightGBM con `num_leaves` y `n_estimators` en el máximo
+      del rango y `learning_rate` alto, y Random Forest con la profundidad máxima. LightGBM pasa de ser
+      el mejor en la búsqueda (0.76) al peor en test (2.14): es la familia que más se sobreajusta.
+      Ridge casi no se afecta porque un `alpha` alto limita cuánto puede memorizar.
+    - **El modelo final no lleva los parámetros fijos.** `ajustar_familia` reconstruye el pipeline con
+      `study.best_params`, que sólo contiene lo que buscó Optuna. Random Forest se entrenó sin
+      `n_jobs=-1` (un solo núcleo, de ahí los 969 s) y sin `random_state`, y LightGBM sin
+      `subsample_freq=1`, por lo que su `subsample` no tuvo efecto.
+    - **Relación con el modelo en producción.** `05-pipeline` repite este mismo protocolo (features,
+      particiones, espacios de búsqueda y semillas) con el HPO sólo sobre train y conservando los
+      parámetros fijos. Ahí la métrica de la búsqueda (2.06–2.12) sí coincide con la de test
+      (2.06–2.11) y LightGBM gana con RMSLE 2.057 y $R^2$ 0.170, mejor que cualquier modelo de esta
+      tabla. Por eso el `champion` registrado y servido por la API viene del flow y no de este
+      notebook.
+
+    **Limitaciones.** Submuestra de 300,000 de las ~2 M filas disponibles; presupuesto pequeño de
+    trials (13, 12 y 25); un solo split de test, sin validación cruzada; texto reducido a 80
+    componentes LSA; y la imputación de numéricas de `02` se calcula con toda la muestra antes de
+    dividir, aunque su efecto es marginal porque afecta pocas filas.
     """)
     return
 

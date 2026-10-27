@@ -486,17 +486,79 @@ def _():
       los runs finales se colgaron de los `hpo-*` originales y las métricas de test fueron
       idénticas a las de la primera corrida (las semillas están fijas).
 
+    ## 12. Corrida en Databricks: `tee-primera-corrida`
+
+    `uv run python -m entrenamiento.flujo --hacer-tuning --identificador primera-corrida`, con
+    300,000 filas y el presupuesto completo de trials. El flow run terminó en `Completed` en
+    **46 min 22 s**, con sus 19 task runs completados.
+
+    **Duración por etapa** (tomada de los runs de MLflow):
+
+    | Familia | HPO (`hpo-<familia>`) | Trials | Tiempo por trial | Fit final (train + validación) |
+    |---|---:|---:|---:|---:|
+    | Ridge | 5.4 min | 13 | 19–20 s | 22.6 s |
+    | Random Forest | 16.4 min | 12 | 26–180 s | 116.5 s |
+    | LightGBM | 18.6 min | 25 | 23–62 s | 43.7 s |
+
+    **Resultados** (el RMSLE de validación es el del mejor trial; las métricas de test son de los
+    runs `<familia>-final`):
+
+    | Familia | Mejores parámetros | RMSLE validación | RMSLE test | $R^2$ test | MAE log test | Spearman test | Versión | Alias |
+    |---|---|---:|---:|---:|---:|---:|---:|---|
+    | **LightGBM** | 900 árboles, `learning_rate` 0.039, `num_leaves` 68, `min_child_samples` 206, `subsample` 0.94, `colsample_bytree` 0.70, `reg_lambda` 0.027 | 2.063 | **2.057** | **0.170** | **1.642** | **0.406** | 3 | `champion` |
+    | Random Forest | 200 árboles, `max_depth` 17, `min_samples_leaf` 2, `max_features` 0.3, `max_samples` 0.57 | 2.086 | 2.082 | 0.150 | 1.674 | 0.384 | 2 | `challenger` |
+    | Ridge | `alpha` 0.1 | 2.115 | 2.110 | 0.127 | 1.698 | 0.354 | 1 | `candidate` |
+
     ### Interpretación
 
-    > **Pendiente de redactar con la corrida en Databricks:** duración de cada etapa (el HPO
-    > domina el tiempo), familia que quedó como `champion` y su versión, consistencia con
-    > `03-experimentos`, y limitaciones (ejecución secuencial de las familias, servidor de Prefect
-    > local, ranking por test con un solo split).
+    - **El HPO domina el tiempo.** Los tres estudios suman unos 40 de los 46 minutos (~87 %). El
+      resto es entrenar los modelos finales (3 min en total), registrarlos (~20 s por familia:
+      serializar el `Pipeline` con firma y ejemplo y subirlo a Unity Catalog) y la carga y
+      preparación de datos, que tarda segundos. Por eso conviene `--sin-tuning` para repetir el
+      registro: se salta los 40 minutos y produce los mismos parámetros.
+    - **La validación anticipa bien el test.** En las tres familias el RMSLE de test queda a menos
+      de 0.006 del de validación y el orden es el mismo. Esto indica que la búsqueda no se sobreajustó
+      a la partición de validación y que la separación train / validación / test funciona: el test
+      no participó en ninguna decisión de hiperparámetros.
+    - **LightGBM es `champion` (versión 3) sin ambigüedad.** Gana en las cuatro métricas y entrena
+      2.7 veces más rápido que Random Forest. La ventaja frente a Random Forest es pequeña
+      (0.025 de RMSLE, un error ~2.5 % menor en factor multiplicativo), pero es consistente en
+      $R^2$, MAE y Spearman y no tiene costo extra. Frente a Ridge la diferencia es de 0.053 de
+      RMSLE y 0.05 de Spearman: las interacciones no lineales entre las señales de tendencia
+      (frecuencia de música, autor del audio, lugar y hashtags) y el texto aportan algo que el
+      modelo lineal no captura.
+    - **Qué significa el error.** Un RMSLE de 2.06 equivale a equivocarse por un factor de
+      $e^{2.06} \approx 7.8$ en reproducciones, y el MAE log de 1.64 a un factor típico de
+      $e^{1.64} \approx 5.2$. Con $R^2 = 0.17$ y Spearman de 0.41, el modelo ordena los videos mejor
+      que el azar y sirve para estimar el orden de magnitud del alcance, no la cifra exacta. Es lo
+      esperable usando sólo variables conocidas antes de publicar.
+    - **Hiperparámetros en el borde del espacio.** `alpha = 0.1` es el valor más bajo de la rejilla
+      de Ridge; Random Forest eligió el `min_samples_leaf` mínimo y el `n_estimators` máximo, y
+      LightGBM 900 de un máximo de 1000 árboles. Ampliar esos rangos (o usar *early stopping* en
+      LightGBM) podría mejorar un poco el resultado, aunque no cambiaría qué familia gana.
+    - **Trazabilidad.** Cada versión registrada tiene tags `family`, `final_run_id`, `hpo_run_id`,
+      `test_rmsle` y `prefect_run = primera-corrida`, así que desde Unity Catalog se llega al run
+      final, a su estudio de HPO y al flow run de Prefect que la produjo.
+    - **Consistencia con `03-experimentos`.** El flow usa las mismas features, particiones, espacios
+      de búsqueda y semillas que el 03, pero corre el HPO sólo con train y conserva los parámetros
+      fijos en el modelo final. Por eso sus números no coinciden con los del notebook 03 (ver la
+      interpretación de ese notebook) y el modelo que sirve la API sale de este flow.
+
+    **Limitaciones.**
+
+    - Las tres familias se ajustan una después de otra; podrían ejecutarse en paralelo para
+      reducir el tiempo total, a costa de competir por los mismos núcleos.
+    - El servidor de Prefect es local y la ejecución es manual: no hay deployments, workers ni
+      schedules, y el historial de corridas vive en la computadora de quien ejecuta.
+    - Los aliases se asignan con el RMSLE de un único split de test, sin validación cruzada; con
+      diferencias de 0.025 entre familias, otro split podría cambiar el orden de los dos primeros.
+    - El modelo se entrena con una submuestra de 300,000 filas de las ~2 M disponibles.
 
     ### Evidencia
 
-    Capturas en `evidencia/`: flow run exitoso con sus tasks en Prefect, experimento con los
-    tres `hpo-*` y el modelo registrado con sus versiones y el alias `champion`.
+    Capturas en `evidencia/`: flow run `tee-primera-corrida` con sus tasks en Prefect
+    (`prefect.png`), experimento con los tres `hpo-*` y el modelo registrado con sus versiones y
+    el alias `champion` (enlazadas desde el README).
     """)
     return
 
