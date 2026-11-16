@@ -1,0 +1,16 @@
+# Contexto de construcción de ambas imágenes: la carpeta src/
+# Configuración y secretos: entran al contenedor al ejecutar (env_file), nunca en la imagen
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Ambientes y cachés locales de Python
+.venv/
+**/__pycache__/
+**/*.pyc
+*.egg-info/
+
+# Notebooks y archivos que ninguna imagen necesita
+**/*.ipynb
+data_pipelines/
