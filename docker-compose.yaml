@@ -1,0 +1,35 @@
+# API y frontend de TEE en red host (Clase 19).
+# Desde la raíz del repositorio:
+#   docker compose -f docker-compose.yaml up --build
+#
+# Con network_mode: host los contenedores comparten la red del anfitrión, así que la UI
+# llega a la API en http://127.0.0.1:8000 igual que al correr todo localmente. Por eso
+# no hay `ports` ni `networks`: cada proceso escucha directamente en su puerto (8000 y 8501).
+name: tee
+
+services:
+  ui:
+    image: tee-ui-image:v1
+    container_name: tee-ui-container
+    build:
+      context: ./src
+      dockerfile: frontend/Dockerfile
+    # Sólo API_URL: la interfaz no recibe credenciales de Databricks
+    env_file:
+      - ./src/frontend/.env
+    network_mode: host
+    command: ["streamlit", "run", "frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+    depends_on:
+      - api
+
+  api:
+    image: tee-api-image:v1
+    container_name: tee-api-container
+    build:
+      context: ./src
+      dockerfile: api/Dockerfile
+    # DATABRICKS_HOST, DATABRICKS_TOKEN, MODELO_REGISTRADO y ALIAS_MODELO
+    env_file:
+      - ./.env
+    network_mode: host
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
