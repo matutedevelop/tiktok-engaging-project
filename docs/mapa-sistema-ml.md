@@ -353,3 +353,52 @@ ingeniería de `desc`/`challenges` antes de cualquier otra cosa.
       `digg_count`, `share_count`, `comment_count`, `user_id` y
       `user_verified` como features candidatas; contradice la decisión de
       excluirlas por leakage y privacidad y debe corregirse.
+
+## 11. Estado final: local, Databricks y EC2
+
+Las secciones anteriores registran el diseño inicial. El sistema que se entregó reparte los componentes en tres lugares:
+
+| Lugar | Componentes | Qué guarda o ejecuta |
+|---|---|---|
+| **Local** (computadora de quien entrena) | `data/raw`, `data/interim`, notebooks `01`–`09`, servidor de Prefect y flow `tee-entrenamiento`, `.env` local | descarga y prepara los datos, corre HPO y entrenamiento, registra en Databricks; también sirve para probar API e interfaz con `uv run` o con Docker Compose |
+| **Databricks** | experimento `/Shared/pcd-otono-2026-proyecto-tiktok-engaging-estimator` (MLflow) y modelo `workspace.tiktok-engaging-estimator.pcd_otono_2026_tiktok_engaging_estimator` (Unity Catalog) | runs, métricas, artefactos, versiones y aliases (`champion` = versión 3, lightgbm) |
+| **AWS EC2** (`t3.medium`, Ubuntu 24.04, `us-east-1`) | repositorio clonado, `.env` del servidor (permisos 600), contenedores `tee-api-container` y `tee-ui-container` | sirve predicciones; no entrena ni registra |
+
+### Conexiones
+
+| Origen → destino | Protocolo / puerto | Para qué |
+|---|---|---|
+| flow de Prefect (local) → Databricks | HTTPS, token del `.env` local | registrar runs, versiones y aliases |
+| API (EC2) → Databricks | HTTPS, token del `.env` del servidor | resolver `@champion` y descargar esa versión al iniciar |
+| navegador (otra computadora) → interfaz (EC2) | HTTP `:8501`, solo IPs autorizadas en el grupo de seguridad | formulario y resultado |
+| interfaz → API (dentro de la EC2) | HTTP `127.0.0.1:8000` por la red host | `POST /api/v1/predicciones`, `GET /health` |
+| administrador → EC2 | SSH `:22`, solo *My IP* | desplegar, revisar logs y cerrar |
+| Internet → API | **ninguna**: sin regla para el 8000 y la API escucha en `127.0.0.1` | — |
+
+### Patrón de serving final
+
+El diseño inicial (sección 7) proponía **Model-as-Dependency**. Al aparecer un consumidor separado (la interfaz) se pasó a **Model-as-Service**: la API es el único proceso que carga el modelo y la interfaz es un cliente HTTP. El cambio no tocó el modelo: el contrato de entrada (Contrato 2) se convirtió en el esquema Pydantic de la API y el artefacto (Contrato 3) quedó como el `Pipeline` registrado en Unity Catalog, en lugar de un `joblib` local.
+
+```mermaid
+flowchart LR
+    subgraph LOCAL[Local]
+        RAW[(data/raw)] --> PREP[02 · preparación] --> INT[(data/interim)]
+        INT --> FLOW[Prefect · tee-entrenamiento<br/>HPO · entrenar · evaluar · registrar]
+    end
+    subgraph DBX[Databricks]
+        MLF[MLflow · experimento]
+        UC[(Unity Catalog<br/>@champion = v3 lightgbm)]
+    end
+    subgraph EC2[AWS EC2 · Docker Compose · red host]
+        UI[ui · Streamlit<br/>0.0.0.0:8501]
+        API[api · FastAPI<br/>127.0.0.1:8000]
+    end
+    FLOW -- runs y métricas --> MLF
+    FLOW -- versiones y aliases --> UC
+    UC -- descarga @champion al iniciar --> API
+    USER[Navegador<br/>IP autorizada] -- HTTP :8501 --> UI
+    UI -- POST /api/v1/predicciones --> API
+    API -- reproducciones + versión --> UI
+```
+
+Detalle en [`notebooks/08-contenedores.ipynb`](../notebooks/08-contenedores.ipynb), [`notebooks/09-despliegue.ipynb`](../notebooks/09-despliegue.ipynb) e [`informe/informe-final.ipynb`](../informe/informe-final.ipynb).
